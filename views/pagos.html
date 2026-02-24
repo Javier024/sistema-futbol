@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <title>Pagos - Futbol Manager</title>
+    <link rel="stylesheet" href="../assets/css/styles.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+</head>
+<body>
+    <div id="app-layout"><div id="sidebar-placeholder"></div><main><header><h1>Gestión de Pagos</h1></header><div id="view-container" style="height:100%;"></div></main></div>
+    <div id="modal" class="modal-overlay"><div class="modal-box"><div class="modal-header"><h3 id="modal-title">Título</h3><button onclick="closeModal()" class="btn btn-sm btn-secondary"><i class="fas fa-times"></i></button></div><div id="modal-content"></div></div></div>
+    <div id="toast-container"></div>
+    <script src="../assets/js/common.js"></script>
+    <script>
+        window.addEventListener('DOMContentLoaded', () => { if(!checkAuth()) return; renderSidebar('pagos'); loadPayments(); const pid = sessionStorage.getItem('payPlayerId'); if(pid) { setTimeout(()=>{ const s=document.getElementById('pay-player'); if(s){ s.value=pid; updatePaymentInfo(); } sessionStorage.removeItem('payPlayerId'); }, 100); } });
+        function loadPayments() {
+            const rows = db.getAll('pagos').sort((a,b) => new Date(b.fecha_pago) - new Date(a.fecha_pago)).map(p => { const pl = db.getById('jugadores', p.id_jugador); return `<tr><td>${utils.formatDate(p.fecha_pago)}</td><td>${pl ? pl.nombres+' '+pl.apellidos : 'Eliminado'}</td><td>${utils.formatMoney(p.monto)}</td><td>${p.metodo_pago}</td><td><button class="btn btn-sm btn-accent" onclick="genRec(${p.id})"><i class="fas fa-print"></i></button> <button class="btn btn-sm btn-danger" onclick="delPay(${p.id})"><i class="fas fa-trash"></i></button></td></tr>`; }).join('');
+            document.getElementById('view-container').innerHTML = `<div class="grid-2" style="height:100%;"><div class="card"><h3>Registrar</h3><form onsubmit="subPay(event)"><div class="form-group"><label>Jugador</label><select id="pay-player" required onchange="upPayInfo()"></select></div><div class="form-group"><label>Monto</label><input type="number" id="pay-amount" required oninput="calcMonths()"><small id="pay-calc" style="color:var(--accent);"></small></div><div class="grid-2"><div class="form-group"><label>Fecha</label><input type="date" id="pay-date" required></div><div class="form-group"><label>Método</label><select id="pay-method"><option>Efectivo</option><option>Transferencia</option></select></div></div><button class="btn btn-primary btn-block">Procesar</button></form></div><div class="card" style="display:flex; flex-direction:column;"><h3>Historial</h3><div class="table-container" style="flex:1;"><table><thead><tr><th>Fecha</th><th>Jugador</th><th>Monto</th><th></th></tr></thead><tbody>${rows||'<'+'tr><td colspan="4">Sin pagos</td></tr>'}</tbody></table></div></div></div>`;
+            const sel = document.getElementById('pay-player'); db.getAll('jugadores').forEach(p => { const o = document.createElement('option'); o.value=p.id; o.text=`${p.nombres} ${p.apellidos}`; sel.appendChild(o); });
+            document.getElementById('pay-date').valueAsDate = new Date(); upPayInfo();
+        }
+        const upPayInfo = () => { const pid = document.getElementById('pay-player').value; if(!pid) return; const s = finance.getPlayerStatus(pid); const inp = document.getElementById('pay-amount'); const h = document.getElementById('pay-calc'); if(s.status==='debt'){ inp.value=s.fee; h.innerText=`Deuda: ${utils.formatMoney(s.fee)}`; } else if(s.status==='partial'){ inp.value=s.debt; h.innerText=`Falta: ${utils.formatMoney(s.debt)}`; } else { h.innerText="Al día."; } calcMonths(); };
+        const calcMonths = () => { const amt = parseFloat(document.getElementById('pay-amount').value)||0; const fee = parseFloat(db.getAll('configuracion_sistema')[0].valor_mensual); if(fee>0 && amt>=fee){ const m = Math.floor(amt/fee); let d = new Date(); d.setMonth(d.getMonth()+m); document.getElementById('pay-calc').innerHTML=`Cubre <b>${m} meses</b>. Vence: <b>${utils.formatDate(d)}</b>`; } else if(amt>0) document.getElementById('pay-calc').innerText="Parcial."; else document.getElementById('pay-calc').innerText=""; };
+        const subPay = (e) => { e.preventDefault(); finance.registerPayment(document.getElementById('pay-player').value, document.getElementById('pay-amount').value, document.getElementById('pay-date').value, document.getElementById('pay-method').value, ''); showToast('Registrado'); loadPayments(); };
+        const delPay = (id) => { if(confirm('¿Eliminar?')) { db.getAll('aplicacion_pagos').filter(a=>a.id_pago==id).forEach(a=>db.delete('aplicacion_pagos',a.id)); db.delete('pagos', id); showToast('Eliminado'); loadPayments(); } };
+        const genRec = (id) => { const p = db.getById('pagos', id); const pl = db.getById('jugadores', p.id_jugador); const conf = db.getAll('configuracion_sistema')[0]; const ac = db.getById('acudientes', pl.id_acudiente); openModal('Recibo', `<div class="receipt"><div class="receipt-header"><h2>${conf.nombre_escuela.toUpperCase()}</h2><p>#REC-${p.id}</p></div><div class="receipt-row"><span>Fecha:</span><span>${utils.formatDate(p.fecha_pago)}</span></div><div class="receipt-row"><span>De:</span><span>${ac?ac.nombre:pl.nombres}</span></div><div class="receipt-row"><span>Concepto:</span><span>${pl.nombres} ${pl.apellidos}</span></div><div class="receipt-total"><span>TOTAL:</span><span>${utils.formatMoney(p.monto)}</span></div></div><div class="no-print" style="text-align:center;margin-top:20px;"><button class="btn btn-primary" onclick="window.print()">Imprimir</button></div>`); };
+    </script>
+</body>
+</html>

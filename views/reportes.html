@@ -1,0 +1,9 @@
+<!DOCTYPE html>
+<html lang="es">
+<head><meta charset="UTF-8"><title>Reportes</title><link rel="stylesheet" href="../assets/css/styles.css"><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css"></head>
+<body><div id="app-layout"><div id="sidebar-placeholder"></div><main><header><h1>Reportes</h1></header><div id="view-container"></div></main></div><div id="toast-container"></div>
+<script src="../assets/js/common.js"></script><script>
+window.addEventListener('DOMContentLoaded', () => { if(!checkAuth()) return; renderSidebar('reportes'); document.getElementById('view-container').innerHTML = `<div class="card"><h3>Reportes</h3><div class="grid-2"><div style="padding:20px;border:1px solid var(--border);border-radius:8px;"><h4>Jugadores</h4><button class="btn btn-primary btn-block" onclick="exPl()">CSV</button></div><div style="padding:20px;border:1px solid var(--border);border-radius:8px;"><h4>Pagos</h4><button class="btn btn-accent btn-block" onclick="exPa()">CSV</button></div></div></div>`; });
+const exPl = () => { const pl = db.getAll('jugadores'); let csv="data:text/csv;charset=utf-8,Nombre,Edad,Tel\n"; pl.forEach(p=>csv+=`"${p.nombres} ${p.apellidos}",${utils.getAge(p.fecha_nacimiento)},"${p.telefono}"\n`); const l = document.createElement("a"); l.href=encodeURI(csv); l.download="jugadores.csv"; document.body.appendChild(l); l.click(); };
+const exPa = () => { const pa = db.getAll('pagos'); let csv="data:text/csv;charset=utf-8,Fecha,Monto\n"; pa.forEach(p=>csv+=`"${p.fecha_pago}",${p.monto}\n`); const l = document.createElement("a"); l.href=encodeURI(csv); l.download="pagos.csv"; document.body.appendChild(l); l.click(); };
+</script></body></html>

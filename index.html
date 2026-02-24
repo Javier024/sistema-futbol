@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Login - Futbol Manager</title>
+    <!-- Ruta actualizada para la estructura de carpetas -->
+    <link rel="stylesheet" href="assets/css/styles.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+</head>
+<body>
+
+    <div id="login-screen">
+        <div class="login-box">
+            <i class="fas fa-futbol fa-4x" style="color: var(--primary); margin-bottom: 20px;"></i>
+            <h2>Futbol Manager Pro</h2>
+            <p style="color: #7f8c8d; margin-bottom: 30px;">Sistema Integral de Gestión</p>
+            <form id="login-form">
+                <div class="form-group">
+                    <input type="email" id="login-email" placeholder="Correo (admin@futbol.com)" required value="admin@futbol.com">
+                </div>
+                <div class="form-group">
+                    <input type="password" id="login-pass" placeholder="Contraseña (admin123)" required value="admin123">
+                </div>
+                <button type="submit" class="btn btn-primary btn-block">Ingresar</button>
+            </form>
+        </div>
+    </div>
+
+    <div id="toast-container"></div>
+
+    <!-- Ruta actualizada -->
+    <script src="assets/js/common.js"></script>
+    <script>
+        document.getElementById('login-form').addEventListener('submit', (e) => {
+            e.preventDefault();
+            const u = document.getElementById('login-email').value; 
+            const p = document.getElementById('login-pass').value;
+            const user = db.getAll('usuarios').find(x => x.correo === u && x.hash_contrasena === p);
+            if(user) { 
+                sessionStorage.setItem('user', 'true'); 
+                window.location.href = 'views/dashboard.html'; 
+            } else { showToast('Credenciales incorrectas', 'error'); }
+        });
+    </script>
+</body>
+</html>
