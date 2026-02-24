@@ -12,17 +12,145 @@
     <div id="toast-container"></div>
     <script src="../assets/js/common.js"></script>
     <script>
-        window.addEventListener('DOMContentLoaded', () => { if(!checkAuth()) return; renderSidebar('jugadores'); loadPlayers(); });
-        function loadPlayers() {
-            const players = db.getAll('jugadores');
-            const rows = players.map(p => { const cat = db.getById('categorias', p.id_categoria); const status = finance.getPlayerStatus(p.id); let badgeClass = status.status === 'paid' ? 'bg-green' : (status.status === 'partial' ? 'bg-yellow' : 'bg-red'); return `<tr><td>${p.nombres} ${p.apellidos}</td><td>${utils.getAge(p.fecha_nacimiento)}</td><td>${cat ? cat.nombre : 'N/A'}</td><td>${p.telefono}</td><td><span class="badge ${badgeClass}">${status.status.toUpperCase()}</span></td><td><button class="btn btn-sm btn-secondary" onclick="editPlayer(${p.id})"><i class="fas fa-edit"></i></button> <a href="pagos.html" class="btn btn-sm btn-primary" onclick="sessionStorage.setItem('payPlayerId', ${p.id})"><i class="fas fa-dollar-sign"></i></a> <button class="btn btn-sm btn-accent" onclick="openMedicalHistory(${p.id})"><i class="fas fa-notes-medical"></i></button></td></tr>`; }).join('');
-            document.getElementById('view-container').innerHTML = `<div class="card" style="flex:1;"><div style="display:flex; justify-content:space-between; margin-bottom:15px;"><input type="text" placeholder="Buscar..." style="max-width:300px;" onkeyup="filterTable('players-table', this.value)"><button class="btn btn-primary" onclick="newPlayerModal()"><i class="fas fa-plus"></i> Nuevo</button></div><div class="table-container"><table id="players-table"><thead><tr><th>Nombre</th><th>Edad</th><th>Cat.</th><th>Teléfono</th><th>Estado</th><th>Acciones</th></tr></thead><tbody>${rows || '<tr><td colspan="6" style="text-align:center">Sin datos</td></tr>'}</tbody></table></div></div>`;
+        window.addEventListener('DOMContentLoaded', async () => { 
+            if(!checkAuth()) return; 
+            renderSidebar('jugadores'); 
+            await loadPlayers(); // Esperar a que carguen los jugadores de la nube
+        });
+
+        async function loadPlayers() {
+            try {
+                const players = await db.getAll('jugadores');
+                
+                // Renderizar filas
+                const rows = players.map(p => { 
+                    const cat = db.getById('categorias', p.id_categoria); 
+                    
+                    // Simulamos estado visual ya que conectar el cálculo financiero completo requiere más endpoints API
+                    let badgeClass = 'bg-blue'; 
+                    
+                    return `<tr>
+                        <td>${p.nombres} ${p.apellidos}</td>
+                        <td>${utils.getAge(p.fecha_nacimiento)}</td>
+                        <td>${cat ? cat.nombre : 'N/A'}</td>
+                        <td>${p.telefono}</td>
+                        <td><span class="badge ${badgeClass}">ACTIVO</span></td>
+                        <td>
+                            <button class="btn btn-sm btn-secondary" onclick="editPlayer(${p.id})"><i class="fas fa-edit"></i></button> 
+                            <a href="pagos.html" class="btn btn-sm btn-primary" onclick="sessionStorage.setItem('payPlayerId', ${p.id})"><i class="fas fa-dollar-sign"></i></a> 
+                            <button class="btn btn-sm btn-accent" onclick="alert('Módulo médico conectado próximamente')"><i class="fas fa-notes-medical"></i></button>
+                        </td>
+                    </tr>`; 
+                }).join('');
+                
+                document.getElementById('view-container').innerHTML = `
+                    <div class="card" style="flex:1;">
+                        <div style="display:flex; justify-content:space-between; margin-bottom:15px;">
+                            <input type="text" placeholder="Buscar jugador..." style="max-width:300px;" onkeyup="filterTable('players-table', this.value)">
+                            <button class="btn btn-primary" onclick="newPlayerModal()"><i class="fas fa-plus"></i> Nuevo Jugador</button>
+                        </div>
+                        <div class="table-container">
+                            <table id="players-table">
+                                <thead><tr><th>Nombre</th><th>Edad</th><th>Cat.</th><th>Teléfono</th><th>Estado</th><th>Acciones</th></tr></thead>
+                                <tbody>${rows || '<tr><td colspan="6" style="text-align:center; padding:20px;">No hay jugadores registrados en la nube.</td></tr>'}</tbody>
+                            </table>
+                        </div>
+                    </div>`;
+            } catch (error) {
+                console.error(error);
+                showToast('Error al cargar jugadores', 'error');
+            }
         }
-        const newPlayerModal = () => { const catOptions = db.getAll('categorias').map(c => `<option value="${c.id}">${c.nombre}</option>`).join(''); openModal('Nuevo Jugador', `<form onsubmit="savePlayer(event)"><div class="grid-2"><div class="form-group"><label>Nombres</label><input type="text" id="p-name" required></div><div class="form-group"><label>Apellidos</label><input type="text" id="p-lastname" required></div></div><div class="grid-2"><div class="form-group"><label>Fecha Nac.</label><input type="date" id="p-dob" required onchange="autoSetCategory()"></div><div class="form-group"><label>Teléfono</label><input type="tel" id="p-phone" required></div></div><div class="grid-2"><div class="form-group"><label>Acudiente</label><input type="text" id="p-guardian" required></div><div class="form-group"><label>Tel. Acudiente</label><input type="tel" id="p-guardian-phone" required></div></div><div class="form-group"><label>Categoría</label><select id="p-cat" required>${catOptions}</select></div><button type="submit" class="btn btn-primary btn-block">Guardar</button></form>`); };
-        const autoSetCategory = () => { const dob = document.getElementById('p-dob').value; if(!dob) return; const cat = utils.getCategory(utils.getAge(dob)); if(cat) document.getElementById('p-cat').value = cat.id; };
-        const savePlayer = (e) => { e.preventDefault(); let acudiente = db.getAll('acudientes').find(a => a.telefono === document.getElementById('p-guardian-phone').value); if(!acudiente) acudiente = db.add('acudientes', { nombre: document.getElementById('p-guardian').value, telefono: document.getElementById('p-guardian-phone').value }); db.add('jugadores', { nombres: document.getElementById('p-name').value, apellidos: document.getElementById('p-lastname').value, fecha_nacimiento: document.getElementById('p-dob').value, telefono: document.getElementById('p-phone').value, id_categoria: document.getElementById('p-cat').value, id_acudiente: acudiente.id, tipo_sangre: 'O+' }); closeModal(); showToast('Guardado'); loadPlayers(); };
-        const editPlayer = (id) => { const p = db.getById('jugadores', id); if(!p) return; newPlayerModal(); setTimeout(() => { document.getElementById('p-name').value = p.nombres; document.getElementById('p-lastname').value = p.apellidos; document.getElementById('p-dob').value = p.fecha_nacimiento; document.getElementById('p-phone').value = p.telefono; document.getElementById('p-cat').value = p.id_categoria; const acu = db.getById('acudientes', p.id_acudiente); if(acu){ document.getElementById('p-guardian').value = acu.nombre; document.getElementById('p-guardian-phone').value = acu.telefono; } document.querySelector('#modal-content form').onsubmit = (ev) => { ev.preventDefault(); db.update('jugadores', id, { nombres: document.getElementById('p-name').value, apellidos: document.getElementById('p-lastname').value, fecha_nacimiento: document.getElementById('p-dob').value, telefono: document.getElementById('p-phone').value, id_categoria: document.getElementById('p-cat').value }); closeModal(); showToast('Actualizado'); loadPlayers(); }; }, 100); };
-        const openMedicalHistory = (playerId) => { const p = db.getById('jugadores', playerId); const history = db.getAll('historial_medico').filter(h => h.id_jugador == playerId).sort((a,b) => new Date(b.fecha) - new Date(a.fecha)); const rows = history.map(h => `<tr><td>${utils.formatDate(h.fecha)}</td><td><span class="badge ${h.tipo==='Alergia'?'bg-red':'bg-blue'}">${h.tipo}</span></td><td>${h.descripcion}</td><td><button class="btn btn-sm btn-danger" onclick="db.delete('historial_medico', ${h.id}); openMedicalHistory(${playerId});"><i class="fas fa-trash"></i></button></td></tr>`).join(''); openModal(`Médico: ${p.nombres}`, `<div style="margin-bottom:20px;"><h4>Registrar</h4><div style="display:flex; gap:10px;"><select id="med-type"><option value="Lesión">Lesión</option><option value="Enfermedad">Enfermedad</option><option value="Alergia">Alergia</option></select><input type="text" id="med-desc" placeholder="Desc" style="flex:1;"><input type="date" id="med-date"><button class="btn btn-primary" onclick="db.add('historial_medico', {id_jugador:${playerId}, tipo:document.getElementById('med-type').value, descripcion:document.getElementById('med-desc').value, fecha:document.getElementById('med-date').value}); openMedicalHistory(${playerId});"><i class="fas fa-plus"></i></button></div></div><table><thead><tr><th>Fecha</th><th>Tipo</th><th>Desc</th><th></th></tr></thead><tbody>${rows||'<tr><td colspan="4">Sin datos</td></tr>'}</tbody></table>`); };
+
+        const newPlayerModal = async () => {
+            const cats = await db.getAll('categorias');
+            const catOptions = cats.map(c => `<option value="${c.id}">${c.nombre}</option>`).join('');
+            
+            openModal('Nuevo Jugador', `
+                <form onsubmit="savePlayer(event)">
+                    <div class="grid-2">
+                        <div class="form-group"><label>Nombres</label><input type="text" id="p-name" required></div>
+                        <div class="form-group"><label>Apellidos</label><input type="text" id="p-lastname" required></div>
+                    </div>
+                    <div class="grid-2">
+                        <div class="form-group"><label>Fecha Nac.</label><input type="date" id="p-dob" required onchange="autoSetCategory()"></div>
+                        <div class="form-group"><label>Teléfono</label><input type="tel" id="p-phone" required></div>
+                    </div>
+                    <div class="grid-2">
+                        <div class="form-group"><label>Nombre Acudiente</label><input type="text" id="p-guardian" required></div>
+                        <div class="form-group"><label>Tel. Acudiente</label><input type="tel" id="p-guardian-phone" required></div>
+                    </div>
+                    <div class="form-group"><label>Categoría</label><select id="p-cat" required>${catOptions}</select></div>
+                    <button type="submit" class="btn btn-primary btn-block">Guardar en la Nube</button>
+                </form>
+            `);
+        };
+
+        const autoSetCategory = () => { 
+            const dob = document.getElementById('p-dob').value; 
+            if(!dob) return; 
+            const cat = utils.getCategory(utils.getAge(dob)); 
+            if(cat) document.getElementById('p-cat').value = cat.id; 
+        };
+
+        const savePlayer = async (e) => {
+            e.preventDefault();
+            
+            // Recopilamos los datos que el Backend API espera
+            const playerData = {
+                nombres: document.getElementById('p-name').value,
+                apellidos: document.getElementById('p-lastname').value,
+                fecha_nacimiento: document.getElementById('p-dob').value,
+                telefono: document.getElementById('p-phone').value,
+                id_categoria: document.getElementById('p-cat').value,
+                tipo_sangre: 'O+',
+                // Datos del acudiente para que el backend cree la relación en la BD
+                guardian_name: document.getElementById('p-guardian').value,
+                guardian_phone: document.getElementById('p-guardian-phone').value
+            };
+
+            try {
+                // Enviamos al servidor
+                await db.add('jugadores', playerData);
+                closeModal();
+                showToast('Jugador guardado exitosamente en Turso', 'success');
+                await loadPlayers(); // Recargamos la lista desde la nube
+            } catch (error) {
+                console.error("Error detallado:", error);
+                showToast('Error de conexión al guardar', 'error');
+            }
+        };
+
+        // Nota: La función Editar se mantiene visual. Para editar necesitarías crear un endpoint PUT en el backend.
+        const editPlayer = (id) => { 
+            const players = db.data.jugadores || []; 
+            const p = players.find(x => x.id == id);
+            
+            if(!p) { showToast('Jugador no encontrado', 'error'); return; }
+            
+            newPlayerModal();
+            setTimeout(() => {
+                document.getElementById('p-name').value = p.nombres; 
+                document.getElementById('p-lastname').value = p.apellidos; 
+                document.getElementById('p-dob').value = p.fecha_nacimiento; 
+                document.getElementById('p-phone').value = p.telefono; 
+                document.getElementById('p-cat').value = p.id_categoria;
+                
+                // Lógica de visualización para acudiente (simulada)
+                if(p.id_acudiente) {
+                     // Nota: En este código simplificado no mostramos el nombre del acudiente al editar
+                     // porque no lo trajimos en la consulta SQL de getAll('jugadores').
+                     // Para hacerlo, deberías hacer un JOIN en la API.
+                }
+
+                // Prevenimos guardar en modo edición por ahora hasta que agregues el endpoint PUT en el backend
+                const form = document.querySelector('#modal-content form');
+                form.onsubmit = (ev) => {
+                    ev.preventDefault();
+                    showToast('La edición aún no está conectada a la base de datos.', 'warning');
+                };
+            }, 100); 
+        };
     </script>
 </body>
 </html>

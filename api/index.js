@@ -5,16 +5,15 @@ import { client, initDb } from '../lib/db.js';
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Middleware
-app.use(cors()); // Permite que tu HTML hable con este servidor
-app.use(express.json()); // Permite leer JSON en el cuerpo de las peticiones
+app.use(cors());
+app.use(express.json());
 
-// --- RUTAS DE SALUD ---
+// Ruta de salud
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', message: 'API Corriendo' });
 });
 
-// --- RUTAS DE JUGADORES ---
+// --- RUTAS DE JUGADORES (MEJORADA PARA TU SQL) ---
 app.get('/api/jugadores', async (req, res) => {
   try {
     const result = await client.execute('SELECT * FROM jugadores ORDER BY id DESC');
@@ -25,14 +24,39 @@ app.get('/api/jugadores', async (req, res) => {
 });
 
 app.post('/api/jugadores', async (req, res) => {
-  const { nombres, apellidos, fecha_nacimiento, telefono, id_categoria, id_acudiente, tipo_sangre } = req.body;
+  // Recibir todos los datos, incluidos los del acudiente
+  const { nombres, apellidos, fecha_nacimiento, telefono, id_categoria, guardian_name, guardian_phone, tipo_sangre } = req.body;
+  
   try {
+    let id_acudiente = null;
+
+    // 1. Lógica de Acudientes (Tu SQL lo requiere)
+    if (guardian_name && guardian_phone) {
+      // Buscamos si el acudiente ya existe por el teléfono
+      const checkPhone = await client.execute('SELECT id FROM acudientes WHERE telefono = ?', [guardian_phone]);
+      
+      if (checkPhone.rows.length > 0) {
+        // Si ya existe, usamos su ID
+        id_acudiente = checkPhone.rows[0].id;
+      } else {
+        // Si no existe, creamos uno nuevo
+        const newAcudiente = await client.execute({
+          sql: 'INSERT INTO acudientes (nombre, telefono) VALUES (?, ?)',
+          args: [guardian_name, guardian_phone]
+        });
+        id_acudiente = newAcudiente.meta.last_row_id;
+      }
+    }
+
+    // 2. Insertar el Jugador
     const result = await client.execute({
       sql: 'INSERT INTO jugadores (nombres, apellidos, fecha_nacimiento, telefono, id_categoria, id_acudiente, tipo_sangre) VALUES (?, ?, ?, ?, ?, ?, ?)',
-      args: [nombres, apellidos, fecha_nacimiento, telefono, id_categoria, id_acudiente || null, tipo_sangre || 'O+']
+      args: [nombres, apellidos, fecha_nacimiento, telefono, id_categoria, id_acudiente, tipo_sangre || 'O+']
     });
+
     res.status(201).json({ id: result.meta.last_row_id });
   } catch (error) {
+    console.error("Error guardando jugador:", error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -60,14 +84,12 @@ app.post('/api/pagos', async (req, res) => {
   }
 });
 
-// --- RUTA DE INICIALIZACIÓN (Setup) ---
-// Ejecuta esto una vez para crear las tablas
+// --- SETUP INICIAL ---
 app.post('/api/setup', async (req, res) => {
   await initDb();
-  res.json({ message: 'Base de datos inicializada correctamente' });
+  res.json({ message: 'Base de datos inicializada' });
 });
 
-// Iniciar servidor
 app.listen(PORT, () => {
   console.log(`🚀 Servidor corriendo en http://localhost:${PORT}`);
 });
