@@ -1,14 +1,15 @@
 {
   "cleanUrls": true,
   "trailingSlash": false,
+  "outputDirectory": "./",
   "rewrites": [
     {
-      "source": "/",
-      "destination": "/index.html"
+      "source": "/api/:path*",
+      "destination": "/api/index.js"
     },
     {
       "source": "/:path*",
-      "destination": "/views/:path*.html"
+      "destination": "/index.html"
     }
   ]
 }
