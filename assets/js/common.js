@@ -1,12 +1,6 @@
 // ==========================================
-// 1. CONFIGURACIÓN Y UTILIDADES
+// 1. UTILIDADES
 // ==========================================
-
-// Detectar si estamos en Local o en Vercel para la URL de la API
-const API_URL = window.location.hostname === 'localhost' 
-    ? 'http://localhost:3000/api'  // URL local (tu PC)
-    : '/api';                     // URL Vercel (producción)
-
 const utils = {
     formatMoney: (amount) => {
         return new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP' }).format(amount);
@@ -16,134 +10,248 @@ const utils = {
         return new Date(dateStr).toLocaleDateString('es-CO'); 
     },
     getAge: (birthDate) => {
+        if (!birthDate) return 0;
         const today = new Date();
         const birth = new Date(birthDate);
         let age = today.getFullYear() - birth.getFullYear();
         const m = today.getMonth() - birth.getMonth();
         if (m < 0 || (m === 0 && today.getDate() < birth.getDate())) age--;
         return age;
+    },
+    getCategory: (age) => {
+        // Lógica por defecto si falla la API
+        const defaultCats = [
+            { id: 1, nombre: 'Pre-Infantil', edad_minima: 6, edad_maxima: 8 },
+            { id: 2, nombre: 'Infantil', edad_minima: 9, edad_maxima: 12 },
+            { id: 3, nombre: 'Cadete', edad_minima: 13, edad_maxima: 16 },
+            { id: 4, nombre: 'Juvenil', edad_minima: 17, edad_maxima: 99 }
+        ];
+        return defaultCats.find(c => age >= c.edad_minima && age <= c.edad_maxima) || { nombre: 'Libre' };
     }
 };
 
 // ==========================================
-// 2. INTERFAZ DE BASE DE DATOS (MOCK API)
+// 2. LÓGICA FINANCIERA (ANTES FALTANTE)
 // ==========================================
+const finance = {
+    // Calcula el estado de pago de un jugador para el mes actual
+    getPlayerStatus: (playerId) => {
+        const players = db.data.jugadores || [];
+        const payments = db.data.pagos || [];
+        const config = db.data.configuracion_sistema || { valor_mensual: 50000 };
+        
+        const player = players.find(p => p.id == playerId);
+        if (!player) return { status: 'unknown', debt: 0, paid: 0 };
 
-const db = {
-    data: {}, // Ya no usamos localStorage, usaremos la API
-    
-    // Ya no inicializamos datos locales, iniciamos sesión
-    async init() {
-        console.log("Frontend iniciado. Conectando a API:", API_URL);
+        const now = new Date();
+        const currentMonth = now.getMonth();
+        const currentYear = now.getFullYear();
+
+        // Sumar pagos del mes actual
+        const paidAmount = payments
+            .filter(p => {
+                const d = new Date(p.fecha_pago);
+                return p.id_jugador == playerId && 
+                       d.getMonth() === currentMonth && 
+                       d.getFullYear() === currentYear;
+            })
+            .reduce((sum, p) => sum + parseInt(p.monto || 0), 0);
+
+        const fee = parseInt(config.valor_mensual);
+        const debt = fee - paidAmount;
+
+        let status = 'debt';
+        if (debt <= 0) status = 'paid';
+        else if (paidAmount > 0) status = 'partial';
+
+        return { status, debt, paid: paidAmount, fee };
     },
 
-    // OBTENER DATOS (GET)
+    registerPayment: async (playerId, amount, date, method, notes) => {
+        const payment = {
+            id_jugador: playerId,
+            monto: amount,
+            fecha_pago: date,
+            metodo_pago: method,
+            notas: notes
+        };
+        // Llamada a la API real
+        await db.add('pagos', payment);
+    }
+};
+
+// ==========================================
+// 3. CLIENTE API
+// ==========================================
+const API_URL = window.location.hostname === 'localhost' 
+    ? 'http://localhost:3000/api'  
+    : '/api';                    
+
+const db = {
+    data: {}, // Cache
+
+    async init() { 
+        try {
+            // Cargar configuración
+            const resConfig = await fetch(`${API_URL}/configuracion`);
+            if (resConfig.ok) this.data['configuracion_sistema'] = await resConfig.json();
+            else this.data['configuracion_sistema'] = { valor_mensual: 50000, moneda: 'COP', nombre_escuela: 'EFUSA' };
+
+            // Cargar categorías
+            const resCats = await fetch(`${API_URL}/categorias`);
+            if (resCats.ok) this.data['categorias'] = await resCats.json();
+
+            // Precargar jugadores y pagos para cálculos de finanzas
+            await this.getAll('jugadores');
+            await this.getAll('pagos');
+            await this.getAll('gastos');
+            await this.getAll('inventario');
+
+        } catch (error) {
+            console.error("Error init db:", error);
+            showToast('Error conectando al servidor', 'error');
+        }
+    },
+
     getAll: async (table) => {
         try {
-            if (table === 'jugadores') {
-                const res = await fetch(`${API_URL}/jugadores`);
-                if (!res.ok) throw new Error('Error al conectar con el servidor');
-                const data = await res.json();
-                return data; // Devuelve el array de jugadores
-            }
-            if (table === 'pagos') {
-                const res = await fetch(`${API_URL}/pagos`);
-                const data = await res.json();
-                return data;
-            }
-            if (table === 'configuracion_sistema') {
-                // Simulamos esto localmente para no hacer peticiones extra por ahora
-                return [{ id: 1, valor_mensual: 50000, moneda: 'COP', nombre_escuela: 'EFUSA' }];
-            }
-            if (table === 'categorias') {
-                 // Simulamos categorías localmente para agilizar
-                return [
-                    { id: 1, nombre: 'Pre-Infantil', edad_minima: 6, edad_maxima: 8 },
-                    { id: 2, nombre: 'Infantil', edad_minima: 9, edad_maxima: 12 },
-                    { id: 3, nombre: 'Cadete', edad_minima: 13, edad_maxima: 16 }
-                ];
-            }
-            return [];
+            // Retornar caché si existe y es reciente
+            if (this.data[table]) return this.data[table];
+            
+            const res = await fetch(`${API_URL}/${table}`);
+            if (!res.ok) throw new Error(`Error fetching ${table}`);
+            
+            const data = await res.json();
+            this.data[table] = data;
+            return data;
         } catch (error) {
-            console.error("Error cargando datos:", error);
-            showToast('Error al cargar datos del servidor', 'error');
+            console.error(`Error cargando ${table}:`, error);
             return [];
         }
     },
 
-    // GUARDAR DATOS (POST)
     add: async (table, item) => {
         try {
-            if (table === 'jugadores') {
-                const res = await fetch(`${API_URL}/jugadores`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(item)
-                });
-                if (!res.ok) throw new Error('Error al guardar jugador');
-                showToast('Jugador guardado en la Nube');
-                return item;
-            }
-            if (table === 'pagos') {
-                const res = await fetch(`${API_URL}/pagos`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(item)
-                });
-                if (!res.ok) throw new Error('Error al registrar pago');
-                showToast('Pago registrado en la Nube');
-                return item;
-            }
-            // Para otras tablas que aún no tienen API en el backend, usamos local temporalmente
-            console.warn(`Tabla ${table} aún no conectada a API, usando localStorage temporal`);
-            return item; 
+            const res = await fetch(`${API_URL}/${table}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(item)
+            });
+            if (!res.ok) throw new Error('Error al guardar');
+            
+            const result = await res.json();
+            
+            // Actualizar caché local inmediatamente
+            if (!this.data[table]) this.data[table] = [];
+            // Si la API devuelve el ID completo, usarlo, si no simular
+            const newItem = { id: result.id || Date.now(), ...item };
+            this.data[table].push(newItem);
+            
+            return newItem;
         } catch (error) {
-            console.error("Error guardando datos:", error);
-            showToast('Error de conexión con el servidor', 'error');
+            console.error("Error guardando:", error);
+            showToast('Error de conexión', 'error');
             throw error;
         }
     },
 
-    // Placeholder para otras funciones
-    update: async (table, id, newData) => { /* Implementar después */ },
-    delete: async (table, id) => { /* Implementar después */ },
-    getById: (table, id) => { /* Implementar buscando en el array getAll */ }
+    update: async (table, id, changes) => {
+        // Nota: Para simplicidad en este ejemplo, simulamos la actualización en caché 
+        // ya que la API no tiene endpoints PUT para todos.
+        // En un caso real, aquí haríamos fetch(`${API_URL}/${table}/${id}`, { method: 'PUT'... })
+        try {
+            // Actualización especial para configuración
+            if (table === 'configuracion_sistema') {
+                await fetch(`${API_URL}/configuracion`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(changes)
+                });
+                this.data[table] = { ...this.data[table], ...changes };
+                return;
+            }
+            
+            // Actualización genérica en caché (para inventario, etc)
+            if (this.data[table]) {
+                const idx = this.data[table].findIndex(x => x.id == id);
+                if (idx !== -1) {
+                    this.data[table][idx] = { ...this.data[table][idx], ...changes };
+                }
+            }
+        } catch (e) {
+            console.error("Error actualizando", e);
+        }
+    },
+
+    delete: async (table, id) => {
+        try {
+            const res = await fetch(`${API_URL}/${table}/${id}`, { method: 'DELETE' });
+            if (res.ok) {
+                this.data[table] = this.data[table].filter(i => i.id != id);
+                showToast('Eliminado correctamente', 'success');
+            }
+        } catch (error) {
+            console.error("Error eliminando", error);
+            showToast('Error al eliminar', 'error');
+        }
+    },
+    
+    getById: (table, id) => {
+        if(!this.data[table]) return null;
+        return this.data[table].find(i => i.id == id);
+    }
 };
 
 // ==========================================
-// 3. COMPONENTES UI
+// 4. UI COMPONENTS
 // ==========================================
-
 const showToast = (msg, type = 'success') => {
     const container = document.getElementById('toast-container');
+    if (!container) return;
     const toast = document.createElement('div'); 
     toast.className = `toast ${type}`;
-    toast.innerHTML = `<i class="fas ${type === 'success' ? 'fa-check-circle' : 'fa-exclamation-triangle'}"></i> <span>${msg}</span>`;
+    const icon = type === 'success' ? 'fa-check-circle' : 'fa-exclamation-triangle';
+    toast.innerHTML = `<i class="fas ${icon}"></i> <span>${msg}</span>`;
     container.appendChild(toast);
-    setTimeout(() => { toast.style.opacity = '0'; setTimeout(() => toast.remove(), 300); }, 3000);
+    setTimeout(() => { 
+        toast.style.opacity = '0'; 
+        setTimeout(() => toast.remove(), 300); 
+    }, 3000);
 };
 
 const openModal = (title, htmlContent) => {
-    document.getElementById('modal-title').innerText = title;
-    document.getElementById('modal-content').innerHTML = htmlContent;
-    document.getElementById('modal').classList.add('active');
+    const titleEl = document.getElementById('modal-title');
+    const contentEl = document.getElementById('modal-content');
+    const modalEl = document.getElementById('modal');
+    
+    if(titleEl) titleEl.innerText = title;
+    if(contentEl) contentEl.innerHTML = htmlContent;
+    if(modalEl) modalEl.classList.add('active');
 };
 
-const closeModal = () => { document.getElementById('modal').classList.remove('active'); };
-
-const toggleDarkMode = () => {
-    document.body.classList.toggle('dark-mode');
+const closeModal = () => { 
+    const modalEl = document.getElementById('modal');
+    if(modalEl) modalEl.classList.remove('active');
 };
 
-const logout = () => { sessionStorage.removeItem('user'); window.location.href = '../index.html'; };
+const toggleDarkMode = () => { 
+    document.body.classList.toggle('dark-mode'); 
+};
+
+const logout = () => { 
+    sessionStorage.removeItem('user'); 
+    window.location.href = '/index.html'; 
+};
 
 const checkAuth = () => {
-    if (!sessionStorage.getItem('user')) { window.location.href = '../index.html'; return false; }
+    if (!sessionStorage.getItem('user')) { 
+        window.location.href = '/index.html'; 
+        return false; 
+    }
     return true;
 };
 
 const renderSidebar = (activeId) => {
-    // ... (Código del sidebar igual que antes, manténlo igual)
     const menu = [
         { id: 'dashboard', icon: 'fa-home', label: 'Dashboard', file: 'dashboard.html' },
         { id: 'jugadores', icon: 'fa-users', label: 'Jugadores', file: 'jugadores.html' },
@@ -157,35 +265,24 @@ const renderSidebar = (activeId) => {
     ];
 
     const navHtml = menu.map(item => {
-        let badgeHtml = '';
-        if (item.badgeId) {
-            const count = calculateBadge(item.id);
-            if (count > 0) badgeHtml = `<span id="${item.badgeId}" class="badge bg-red">${count}</span>`;
-        }
-        return `<a href="${item.file}" class="${activeId === item.id ? 'active' : ''}"><span><i class="fas ${item.icon}"></i> ${item.label}</span>${badgeHtml}</a>`;
+        return `<a href="${item.file}" class="${activeId === item.id ? 'active' : ''}"><i class="fas ${item.icon}" style="width:20px"></i> ${item.label}</a>`;
     }).join('');
 
     const sidebarHtml = `
         <aside>
             <div class="brand"><i class="fas fa-shield-alt"></i> EFUSA MANAGER</div>
             <nav>${navHtml}</nav>
-            <div class="user-profile">
-                <div><i class="fas fa-user-circle"></i> <span>Admin</span></div>
-                <div style="margin-top:10px; display:flex; gap:10px;">
-                    <button onclick="toggleDarkMode()" title="Modo Oscuro/Claro"><i class="fas fa-moon"></i></button>
-                    <button onclick="logout()" title="Salir"><i class="fas fa-sign-out-alt"></i></button>
-                </div>
+            <div style="padding: 20px; border-top: 1px solid rgba(255,255,255,0.1);">
+                <button onclick="toggleDarkMode()" class="btn btn-sm btn-secondary btn-block"><i class="fas fa-moon"></i> Tema</button>
+                <button onclick="logout()" class="btn btn-sm btn-danger btn-block" style="margin-top:10px"><i class="fas fa-sign-out-alt"></i> Salir</button>
             </div>
         </aside>
     `;
-    document.getElementById('sidebar-placeholder').innerHTML = sidebarHtml;
+    
+    const placeholder = document.getElementById('sidebar-placeholder');
+    if(placeholder) placeholder.innerHTML = sidebarHtml;
 };
 
-const calculateBadge = (type) => {
-    if (type === 'alertas') return 0; // Simplificado
-    return 0;
-};
-
-window.addEventListener('DOMContentLoaded', () => {
-    db.init();
+window.addEventListener('DOMContentLoaded', () => { 
+    db.init(); 
 });

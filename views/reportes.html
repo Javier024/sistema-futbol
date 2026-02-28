@@ -1,9 +1,218 @@
 <!DOCTYPE html>
 <html lang="es">
-<head><meta charset="UTF-8"><title>Reportes</title><link rel="stylesheet" href="../assets/css/styles.css"><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css"></head>
-<body><div id="app-layout"><div id="sidebar-placeholder"></div><main><header><h1>Reportes</h1></header><div id="view-container"></div></main></div><div id="toast-container"></div>
-<script src="../assets/js/common.js"></script><script>
-window.addEventListener('DOMContentLoaded', () => { if(!checkAuth()) return; renderSidebar('reportes'); document.getElementById('view-container').innerHTML = `<div class="card"><h3>Reportes</h3><div class="grid-2"><div style="padding:20px;border:1px solid var(--border);border-radius:8px;"><h4>Jugadores</h4><button class="btn btn-primary btn-block" onclick="exPl()">CSV</button></div><div style="padding:20px;border:1px solid var(--border);border-radius:8px;"><h4>Pagos</h4><button class="btn btn-accent btn-block" onclick="exPa()">CSV</button></div></div></div>`; });
-const exPl = () => { const pl = db.getAll('jugadores'); let csv="data:text/csv;charset=utf-8,Nombre,Edad,Tel\n"; pl.forEach(p=>csv+=`"${p.nombres} ${p.apellidos}",${utils.getAge(p.fecha_nacimiento)},"${p.telefono}"\n`); const l = document.createElement("a"); l.href=encodeURI(csv); l.download="jugadores.csv"; document.body.appendChild(l); l.click(); };
-const exPa = () => { const pa = db.getAll('pagos'); let csv="data:text/csv;charset=utf-8,Fecha,Monto\n"; pa.forEach(p=>csv+=`"${p.fecha_pago}",${p.monto}\n`); const l = document.createElement("a"); l.href=encodeURI(csv); l.download="pagos.csv"; document.body.appendChild(l); l.click(); };
-</script></body></html>
+<head>
+    <meta charset="UTF-8">
+    <title>Reportes</title>
+    <link rel="stylesheet" href="../assets/css/styles.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+</head>
+<body>
+    <div id="app-layout">
+        <div id="sidebar-placeholder"></div>
+        <main>
+            <header><h1>Reportes y Exportación</h1></header>
+            <div id="view-container"></div>
+        </main>
+    </div>
+    <div id="toast-container"></div>
+    <script src="../assets/js/common.js"></script>
+    <script>
+        window.addEventListener('DOMContentLoaded', async () => { 
+            if(!checkAuth()) return; 
+            renderSidebar('reportes'); 
+            await loadReports(); 
+        });
+
+        async function loadReports() {
+            // Asegurar que tenemos todos los datos cargados en caché
+            await db.init();
+            
+            const players = db.data.jugadores || [];
+            const payments = db.data.pagos || [];
+            const expenses = db.data.gastos || [];
+            const categories = db.data.categorias || [];
+
+            // Obtener categorías únicas de gastos dinámicamente (para que coincidan con lo que se creó en gastos.html)
+            const expenseCategories = [...new Set(expenses.map(e => e.categoria).filter(Boolean))].sort();
+
+            // Generar opciones para los selectores
+            const catOptions = `<option value="all">Todas las Categorías</option>` + 
+                               categories.map(c => `<option value="${c.id}">${c.nombre}</option>`).join('');
+            
+            const expenseOptions = `<option value="all">Todas las Categorías</option>` + 
+                                    expenseCategories.map(c => `<option value="${c}">${c}</option>`).join('');
+
+            document.getElementById('view-container').innerHTML = `
+                <div class="grid-3">
+                    <!-- TARJETA JUGADORES -->
+                    <div class="card" style="text-align:center; border-top-color: var(--accent);">
+                        <i class="fas fa-users fa-3x" style="color:var(--accent); margin-bottom:15px;"></i>
+                        <h3>Jugadores</h3>
+                        <p class="text-muted">Total: ${players.length} registrados</p>
+                        
+                        <div class="form-group" style="text-align:left; margin: 15px 0;">
+                            <label style="font-size:0.8rem;">Filtrar por Categoría:</label>
+                            <select id="filter-player-cat" class="form-control">
+                                ${catOptions}
+                            </select>
+                        </div>
+
+                        <button class="btn btn-accent btn-block" onclick="exportPlayers()">
+                            <i class="fas fa-file-csv"></i> Descargar CSV
+                        </button>
+                    </div>
+
+                    <!-- TARJETA PAGOS -->
+                    <div class="card" style="text-align:center; border-top-color: var(--primary);">
+                        <i class="fas fa-money-bill-wave fa-3x" style="color:var(--primary); margin-bottom:15px;"></i>
+                        <h3>Pagos</h3>
+                        <p class="text-muted">Total: ${payments.length} registros</p>
+                        
+                        <div class="form-group" style="text-align:left; margin: 15px 0;">
+                            <label style="font-size:0.8rem;">Filtrar por Categoría:</label>
+                            <select id="filter-payment-cat" class="form-control">
+                                ${catOptions}
+                            </select>
+                        </div>
+
+                        <button class="btn btn-primary btn-block" onclick="exportPayments()">
+                            <i class="fas fa-file-csv"></i> Descargar CSV
+                        </button>
+                    </div>
+
+                    <!-- TARJETA GASTOS -->
+                    <div class="card" style="text-align:center; border-top-color: var(--danger);">
+                        <i class="fas fa-receipt fa-3x" style="color:var(--danger); margin-bottom:15px;"></i>
+                        <h3>Gastos</h3>
+                        <p class="text-muted">Total: ${expenses.length} registros</p>
+                        
+                        <div class="form-group" style="text-align:left; margin: 15px 0;">
+                            <label style="font-size:0.8rem;">Filtrar por Tipo de Gasto:</label>
+                            <select id="filter-expense-cat" class="form-control">
+                                ${expenseOptions}
+                            </select>
+                        </div>
+
+                        <button class="btn btn-danger btn-block" onclick="exportExpenses()">
+                            <i class="fas fa-file-csv"></i> Descargar CSV
+                        </button>
+                    </div>
+                </div>
+            `;
+        }
+
+        // --- EXPORTAR JUGADORES ---
+        const exportPlayers = () => {
+            let data = db.getAll('jugadores');
+            const filterCat = document.getElementById('filter-player-cat').value;
+            
+            if (filterCat !== 'all') {
+                data = data.filter(p => p.id_categoria == filterCat);
+            }
+
+            if(!data.length) return showToast('No hay datos con ese filtro', 'error');
+            
+            const headers = ["ID", "Nombres", "Apellidos", "Fecha Nacimiento", "Teléfono", "Tipo Sangre", "Categoría ID"];
+            // Mapeo con comillas para seguridad
+            const csvContent = [
+                headers.join(","),
+                ...data.map(row => [
+                    row.id, 
+                    row.nombres, 
+                    row.apellidos, 
+                    row.fecha_nacimiento, 
+                    row.telefono, 
+                    row.tipo_sangre || '', 
+                    row.id_categoria
+                ].map(field => `"${String(field).replace(/"/g, '""')}"`).join(","))
+            ].join("\n");
+
+            downloadCSV(csvContent, `jugadores_${filterCat === 'all' ? 'todos' : 'filtrados'}.csv`);
+        };
+
+        // --- EXPORTAR PAGOS ---
+        const exportPayments = () => {
+            let data = db.getAll('pagos');
+            const players = db.getAll('jugadores'); 
+            const filterCat = document.getElementById('filter-payment-cat').value;
+
+            let targetPlayerIds = [];
+            if (filterCat !== 'all') {
+                targetPlayerIds = players
+                    .filter(p => p.id_categoria == filterCat)
+                    .map(p => p.id);
+            }
+
+            const filteredData = data.filter(pay => {
+                if (filterCat === 'all') return true;
+                return targetPlayerIds.includes(pay.id_jugador);
+            });
+
+            if(!filteredData.length) return showToast('No hay pagos con ese filtro', 'error');
+            
+            const headers = ["ID Pago", "Jugador", "Monto", "Fecha", "Método", "Notas"];
+            
+            const csvContent = [
+                headers.join(","),
+                ...filteredData.map(row => {
+                    const player = players.find(pl => pl.id == row.id_jugador);
+                    const playerName = player ? `${player.nombres} ${player.apellidos}` : 'Desconocido';
+                    
+                    return [
+                        row.id, 
+                        playerName, 
+                        row.monto, 
+                        row.fecha_pago, 
+                        row.metodo_pago, 
+                        row.notas || ''
+                    ].map(field => `"${String(field).replace(/"/g, '""')}"`).join(",");
+                }).join("\n")
+            ];
+
+            downloadCSV(csvContent, `pagos_${filterCat === 'all' ? 'todos' : 'filtrados'}.csv`);
+        };
+
+        // --- EXPORTAR GASTOS ---
+        const exportExpenses = () => {
+            let data = db.getAll('gastos');
+            const filterCat = document.getElementById('filter-expense-cat').value;
+            
+            if (filterCat !== 'all') {
+                data = data.filter(e => e.categoria === filterCat);
+            }
+
+            if(!data.length) return showToast('No hay gastos con ese filtro', 'error');
+            
+            const headers = ["ID", "Concepto", "Monto", "Fecha", "Categoría", "Notas"];
+            const csvContent = [
+                headers.join(","),
+                ...data.map(row => [
+                    row.id, 
+                    row.concepto, 
+                    row.monto, 
+                    row.fecha_gasto, 
+                    row.categoria, 
+                    row.notas || ''
+                ].map(field => `"${String(field).replace(/"/g, '""')}"`).join(","))
+            ].join("\n");
+
+            downloadCSV(csvContent, `gastos_${filterCat === 'all' ? 'todos' : 'filtrados'}.csv`);
+        };
+
+        const downloadCSV = (content, filename) => {
+            // BOM para Excel UTF-8
+            const BOM = "\uFEFF"; 
+            const blob = new Blob([BOM + content], { type: 'text/csv;charset=utf-8;' });
+            const link = document.createElement("a");
+            const url = URL.createObjectURL(blob);
+            link.setAttribute("href", url);
+            link.setAttribute("download", filename);
+            link.style.visibility = 'hidden';
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            showToast('Reporte generado', 'success');
+        };
+    </script>
+</body>
+</html>

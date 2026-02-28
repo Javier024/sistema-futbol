@@ -2,8 +2,7 @@
 <html lang="es">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Dashboard - Futbol Manager</title>
+    <title>Dashboard</title>
     <link rel="stylesheet" href="../assets/css/styles.css">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
@@ -12,24 +11,115 @@
     <div id="app-layout">
         <div id="sidebar-placeholder"></div>
         <main>
-            <header><h1>Dashboard General</h1><div id="date-display"></div></header>
-            <div id="view-container" style="flex: 1;"></div>
+            <header>
+                <h1>Dashboard</h1>
+                <div id="date-display" style="font-weight:600; color:var(--text-muted)"></div>
+            </header>
+            <div id="view-container"></div>
         </main>
     </div>
-    <div id="modal" class="modal-overlay"><div class="modal-box"><div class="modal-header"><h3 id="modal-title">Título</h3><button onclick="closeModal()" class="btn btn-sm btn-secondary"><i class="fas fa-times"></i></button></div><div id="modal-content"></div></div></div>
     <div id="toast-container"></div>
     <script src="../assets/js/common.js"></script>
     <script>
-        window.addEventListener('DOMContentLoaded', () => { if(!checkAuth()) return; renderSidebar('dashboard'); document.getElementById('date-display').innerText = new Date().toLocaleDateString('es-CO', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' }); loadDashboard(); });
-        function loadDashboard() {
-            const players = db.getAll('jugadores'); const payments = db.getAll('pagos'); const expenses = db.getAll('gastos'); const now = new Date();
-            const income = payments.filter(p => new Date(p.fecha_pago).getMonth() === now.getMonth() && new Date(p.fecha_pago).getFullYear() === now.getFullYear()).reduce((sum, p) => sum + parseInt(p.monto), 0);
-            const expense = expenses.filter(e => new Date(e.fecha_gasto).getMonth() === now.getMonth() && new Date(e.fecha_gasto).getFullYear() === now.getFullYear()).reduce((sum, e) => sum + parseInt(e.monto), 0);
-            let paid = 0, debt = 0, partial = 0; players.forEach(p => { const s = finance.getPlayerStatus(p.id); if(s.status === 'paid') paid++; else if(s.status === 'partial') partial++; else debt++; });
-            const html = `<div class="grid-4"><div class="kpi-card"><div class="kpi-label">Ingresos Mes</div><div class="kpi-value" style="color:var(--primary)">${utils.formatMoney(income)}</div></div><div class="kpi-card"><div class="kpi-label">Gastos Mes</div><div class="kpi-value" style="color:var(--danger)">${utils.formatMoney(expense)}</div></div><div class="kpi-card"><div class="kpi-label">Utilidad</div><div class="kpi-value" style="color:var(--text-main)">${utils.formatMoney(income - expense)}</div></div><div class="kpi-card"><div class="kpi-label">Jugadores</div><div class="kpi-value">${players.length}</div></div></div><div class="grid-2"><div class="chart-box"><h4 style="text-align:center; color:var(--text-main);">Estado Pagos</h4><div style="height:180px;"><canvas id="statusChart"></canvas></div></div><div class="chart-box"><h4 style="text-align:center; color:var(--text-main);">Flujo Caja</h4><div style="height:180px;"><canvas id="cashflowChart"></canvas></div></div></div>`;
-            document.getElementById('view-container').innerHTML = html;
-            new Chart(document.getElementById('statusChart'), { type: 'doughnut', data: { labels: ['Al día', 'Abono', 'Deuda'], datasets: [{ data: [paid, partial, debt], backgroundColor: ['#2ecc71', '#f1c40f', '#e74c3c'] }] }, options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'bottom' } } } });
-            new Chart(document.getElementById('cashflowChart'), { type: 'bar', data: { labels: ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun'], datasets: [{ label: 'Ingresos', data: [100000, 120000, 110000, 0, 0, 0], backgroundColor: '#2ecc71' }, { label: 'Gastos', data: [40000, 50000, 45000, 0, 0, 0], backgroundColor: '#e74c3c' }] }, options: { responsive: true, maintainAspectRatio: false, scales: { y: { beginAtZero: true } }, plugins: { legend: { display: false } } } });
+        window.addEventListener('DOMContentLoaded', async () => {
+            if(!checkAuth()) return;
+            renderSidebar('dashboard');
+            document.getElementById('date-display').innerText = new Date().toLocaleDateString('es-CO', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+            await loadDashboard();
+        });
+
+        async function loadDashboard() {
+            try {
+                // Asegurar datos cargados
+                const players = db.data.jugadores || [];
+                const payments = db.data.pagos || [];
+                const expenses = db.data.gastos || [];
+                const config = db.data.configuracion_sistema || { valor_mensual: 0 };
+
+                const now = new Date();
+                const currentMonth = now.getMonth();
+                const currentYear = now.getFullYear();
+
+                // Cálculos
+                const income = payments
+                    .filter(p => {
+                        const d = new Date(p.fecha_pago);
+                        return d.getMonth() === currentMonth && d.getFullYear() === currentYear;
+                    })
+                    .reduce((sum, p) => sum + parseInt(p.monto || 0), 0);
+
+                const expense = expenses
+                    .filter(e => {
+                        const d = new Date(e.fecha_gasto);
+                        return d.getMonth() === currentMonth && d.getFullYear() === currentYear;
+                    })
+                    .reduce((sum, e) => sum + parseInt(e.monto || 0), 0);
+
+                // Conteo de estados de pagos
+                let paidCount = 0;
+                let debtCount = 0;
+                
+                players.forEach(p => {
+                    const status = finance.getPlayerStatus(p.id);
+                    if (status.status === 'paid') paidCount++;
+                    else debtCount++;
+                });
+
+                const html = `
+                <div class="grid-4">
+                    <div class="kpi-card"><div class="kpi-label">Ingresos Mes</div><div class="kpi-value" style="color:var(--primary)">${utils.formatMoney(income)}</div></div>
+                    <div class="kpi-card"><div class="kpi-label">Gastos Mes</div><div class="kpi-value" style="color:var(--danger)">${utils.formatMoney(expense)}</div></div>
+                    <div class="kpi-card"><div class="kpi-label">Utilidad Neta</div><div class="kpi-value">${utils.formatMoney(income - expense)}</div></div>
+                    <div class="kpi-card"><div class="kpi-label">Jugadores</div><div class="kpi-value">${players.length}</div></div>
+                </div>
+
+                <div class="grid-2">
+                    <div class="card">
+                        <h3>Estado de Pagos</h3>
+                        <div style="height:200px; position:relative;">
+                            <canvas id="statusChart"></canvas>
+                        </div>
+                    </div>
+                    <div class="card">
+                        <h3>Flujo de Caja</h3>
+                        <div style="height:200px; position:relative;">
+                            <canvas id="cashflowChart"></canvas>
+                        </div>
+                    </div>
+                </div>
+                `;
+                
+                document.getElementById('view-container').innerHTML = html;
+
+                // Render Charts
+                if(document.getElementById('statusChart')) {
+                    new Chart(document.getElementById('statusChart'), {
+                        type: 'doughnut',
+                        data: { 
+                            labels: ['Pagado', 'Pendiente'], 
+                            datasets: [{ 
+                                data: [paidCount, debtCount], 
+                                backgroundColor: [getComputedStyle(document.documentElement).getPropertyValue('--primary'), '#e74c3c'] 
+                            }] 
+                        },
+                        options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'bottom' } } }
+                    });
+                }
+                if(document.getElementById('cashflowChart')) {
+                    new Chart(document.getElementById('cashflowChart'), {
+                        type: 'bar',
+                        data: {
+                            labels: ['Ingresos', 'Gastos'],
+                            datasets: [{ label: 'Mes Actual', data: [income, expense], backgroundColor: ['#2ecc71', '#e74c3c'] }]
+                        },
+                        options: { responsive: true, maintainAspectRatio: false, scales: { y: { beginAtZero: true } }, plugins: { legend: { display: false } } }
+                    });
+                }
+
+            } catch (error) {
+                console.error(error);
+                showToast('Error cargando dashboard', 'error');
+            }
         }
     </script>
 </body>

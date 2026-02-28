@@ -1,9 +1,326 @@
 <!DOCTYPE html>
 <html lang="es">
-<head><meta charset="UTF-8"><title>Alertas</title><link rel="stylesheet" href="../assets/css/styles.css"><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css"></head>
-<body><div id="app-layout"><div id="sidebar-placeholder"></div><main><header><h1>Alertas</h1></header><div id="view-container" style="flex:1;"></div></main></div><div id="toast-container"></div>
-<script src="../assets/js/common.js"></script><script>
-window.addEventListener('DOMContentLoaded', () => { if(!checkAuth()) return; renderSidebar('alertas'); loadA(); });
-function loadA() { const pl = db.getAll('jugadores'); const td = new Date(); const CD = 5; let ov=[], wa=[], de=[]; pl.forEach(p => { const s = finance.getPlayerStatus(p.id); const iso = (s.status==='debt'||s.status==='partial') && td.getDate()>CD; if(iso) ov.push({p,s,t:'VENCIDO'}); else if(td.getDate()<=CD && s.status!=='paid') wa.push({p,s,t:'POR VENCER'}); else if(s.status!=='paid') de.push({p,s,t:'DEUDA'}); }); const rn = (l,c) => l.length?l.map(i=>`<div style="background:var(--bg-card);padding:15px;margin-bottom:10px;border-left:5px solid ${c};display:flex;justify-content:space-between;"><div><b>${i.p.nombres} ${i.p.apellidos}</b><br><small>Debe: ${utils.formatMoney(i.s.debt)}</small></div><button class="btn btn-sm btn-accent" onclick="wa(${i.p.id},'${i.t}',${i.s.debt})"><i class="fab fa-whatsapp"></i></button></div>`).join(''):'<div style="text-align:center;padding:10px;">Ninguno</div>'; document.getElementById('view-container').innerHTML = `<div class="card"><h3>Alertas</h3><h4 style="color:var(--danger)">Vencidos</h4>${rn(ov,'var(--danger)')}<h4 style="color:var(--warning)">Por Vencer</h4>${rn(wa,'var(--warning)')}<h4 style="color:var(--accent)">Deuda</h4>${rn(de,'var(--accent)')}</div>`; }
-const wa = (pid,t,debt) => { const p = db.getById('jugadores', pid); const conf = db.getAll('configuracion_sistema')[0]; const ac = db.getById('acudientes', p.id_acudiente); const m = t==='VENCIDO'?`Hola ${ac?ac.nombre:p.nombres}, pago vencido. Deuda: ${utils.formatMoney(debt)}.`:`Hola ${ac?ac.nombre:p.nombres}, recordatorio pago: ${utils.formatMoney(debt)}.`; window.open(`https://wa.me/57${ac?ac.telefono:p.telefono}?text=${encodeURIComponent(m)}`,'_blank'); };
-</script></body></html>
+<head>
+    <meta charset="UTF-8">
+    <title>Alertas y Cobranzas</title>
+    <link rel="stylesheet" href="../assets/css/styles.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        .alert-tabs {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+            overflow-x: auto;
+            padding-bottom: 5px;
+        }
+        .alert-tab {
+            padding: 10px 20px;
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            cursor: pointer;
+            font-weight: 600;
+            white-space: nowrap;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .alert-tab:hover { background: #f1f5f9; }
+        .alert-tab.active {
+            background: var(--primary);
+            color: white;
+            border-color: var(--primary);
+        }
+        .alert-tab .count {
+            background: rgba(255,255,255,0.2);
+            padding: 2px 8px;
+            border-radius: 10px;
+            font-size: 0.8rem;
+        }
+        .alert-tab:not(.active) .count {
+            background: var(--border);
+            color: var(--text-main);
+        }
+
+        .alert-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            background: var(--bg-card);
+            padding: 15px;
+            margin-bottom: 10px;
+            border-radius: var(--radius);
+            border-left: 5px solid transparent;
+            box-shadow: var(--shadow);
+            transition: transform 0.2s;
+        }
+        .alert-row:hover { transform: translateY(-2px); }
+        
+        .border-danger { border-left-color: var(--danger); }
+        .border-warning { border-left-color: var(--warning); }
+        .border-accent { border-left-color: var(--accent); }
+        .border-gray { border-left-color: #94a3b8; }
+
+        .player-info h4 { margin: 0; font-size: 1rem; }
+        .player-info p { margin: 2px 0 0; font-size: 0.85rem; color: var(--text-muted); }
+        .debt-tag {
+            background: #fee2e2;
+            color: #991b1b;
+            padding: 5px 10px;
+            border-radius: 6px;
+            font-weight: bold;
+            font-size: 0.9rem;
+        }
+    </style>
+</head>
+<body>
+    <div id="app-layout">
+        <div id="sidebar-placeholder"></div>
+        <main>
+            <header>
+                <h1>Alertas y Cobranzas</h1>
+            </header>
+            
+            <div id="view-container" style="flex:1; display:flex; flex-direction:column;">
+                
+                <!-- Pestañas de Filtrado -->
+                <div class="alert-tabs" id="alert-tabs">
+                    <div class="alert-tab active" onclick="setFilter('vencidos')">
+                        <i class="fas fa-exclamation-circle" style="color:var(--danger)"></i> Vencidos <span class="count" id="count-vencidos">0</span>
+                    </div>
+                    <div class="alert-tab" onclick="setFilter('por_vencer')">
+                        <i class="fas fa-clock" style="color:var(--warning)"></i> Por Vencer <span class="count" id="count-por_vencer">0</span>
+                    </div>
+                    <div class="alert-tab" onclick="setFilter('parcial')">
+                        <i class="fas fa-hand-holding-usd" style="color:var(--accent)"></i> Abonos Parciales <span class="count" id="count-parcial">0</span>
+                    </div>
+                    <div class="alert-tab" onclick="setFilter('todos')">
+                        <i class="fas fa-list" style="color:var(--text-muted)"></i> Todos con Deuda <span class="count" id="count-todos">0</span>
+                    </div>
+                </div>
+
+                <!-- Contenedor de Lista -->
+                <div id="alert-list" style="flex:1; overflow-y:auto; padding-bottom: 60px;">
+                    <!-- Filas generadas por JS -->
+                </div>
+
+                <!-- Paginación -->
+                <div class="pagination-controls" style="border-top: 1px solid var(--border); margin-top:0;">
+                    <!-- JS -->
+                </div>
+
+            </div>
+        </main>
+    </div>
+    
+    <div id="toast-container"></div>
+    <script src="../assets/js/common.js"></script>
+    <script>
+        // Variables de estado
+        let allAlertData = []; // Datos con estado financiero calculado
+        let filteredData = [];
+        let currentFilter = 'vencidos';
+        let currentPage = 1;
+        const rowsPerPage = 8;
+        const CUTOFF_DAY = 5; // Día de corte para considerar vencido
+
+        window.addEventListener('DOMContentLoaded', async () => {
+            if(!checkAuth()) return; 
+            renderSidebar('alertas'); 
+            await loadAlerts(); 
+        });
+
+        async function loadAlerts() {
+            // Asegurar datos cargados
+            await db.init();
+            const players = db.data.jugadores || [];
+            const config = db.data.configuracion_sistema;
+            const today = new Date();
+            const currentDay = today.getDate();
+
+            // Calcular estado para todos
+            allAlertData = players.map(p => {
+                const status = finance.getPlayerStatus(p.id);
+                return { 
+                    ...p, 
+                    ...status, 
+                    currentDay 
+                };
+            }).filter(p => p.status !== 'paid'); // Solo los que deben algo
+
+            updateCounts();
+            applyFilter();
+        }
+
+        function updateCounts() {
+            const today = new Date().getDate();
+            
+            document.getElementById('count-vencidos').innerText = allAlertData.filter(p => p.status !== 'paid' && today > CUTOFF_DAY).length;
+            document.getElementById('count-por_vencer').innerText = allAlertData.filter(p => p.status !== 'paid' && today <= CUTOFF_DAY).length;
+            document.getElementById('count-parcial').innerText = allAlertData.filter(p => p.status === 'partial').length;
+            document.getElementById('count-todos').innerText = allAlertData.length;
+        }
+
+        function setFilter(filter) {
+            currentFilter = filter;
+            currentPage = 1; // Resetear página
+            
+            // Actualizar UI de tabs
+            document.querySelectorAll('.alert-tab').forEach(t => t.classList.remove('active'));
+            event.currentTarget.classList.add('active');
+
+            applyFilter();
+        }
+
+        function applyFilter() {
+            const today = new Date().getDate();
+
+            if (currentFilter === 'vencidos') {
+                filteredData = allAlertData.filter(p => today > CUTOFF_DAY && p.status !== 'paid');
+            } else if (currentFilter === 'por_vencer') {
+                filteredData = allAlertData.filter(p => today <= CUTOFF_DAY && p.status !== 'paid');
+            } else if (currentFilter === 'parcial') {
+                filteredData = allAlertData.filter(p => p.status === 'partial');
+            } else {
+                filteredData = allAlertData; // Todos
+            }
+
+            renderList();
+        }
+
+        function renderList() {
+            const container = document.getElementById('alert-list');
+            container.innerHTML = '';
+
+            if (filteredData.length === 0) {
+                container.innerHTML = `
+                    <div style="text-align:center; padding:50px; color:var(--text-muted);">
+                        <i class="fas fa-check-circle fa-3x" style="margin-bottom:15px; color:var(--primary); opacity:0.5;"></i>
+                        <h3>¡Excelente!</h3>
+                        <p>No hay alertas en esta categoría.</p>
+                    </div>
+                `;
+                document.querySelector('.pagination-controls').innerHTML = '';
+                return;
+            }
+
+            // Paginar
+            const totalPages = Math.ceil(filteredData.length / rowsPerPage);
+            if(currentPage > totalPages) currentPage = 1;
+            const start = (currentPage - 1) * rowsPerPage;
+            const end = start + rowsPerPage;
+            const pageData = filteredData.slice(start, end);
+
+            // Determinar clase de borde y mensaje según la lógica
+            pageData.forEach(p => {
+                let borderClass = 'border-gray';
+                let statusLabel = 'Debe Pagar';
+                let messageHint = '';
+
+                // Lógica refinada para visualización
+                if (p.status === 'partial') {
+                    borderClass = 'border-accent';
+                    statusLabel = 'Abono Parcial';
+                    messageHint = `Pagó ${utils.formatMoney(p.paid)}, falta ${utils.formatMoney(p.debt)}`;
+                } else if (p.currentDay > CUTOFF_DAY) {
+                    borderClass = 'border-danger';
+                    statusLabel = 'Vencido';
+                    messageHint = `Vencido desde el día ${CUTOFF_DAY + 1}`;
+                } else {
+                    borderClass = 'border-warning';
+                    statusLabel = 'Por Vencer';
+                    messageHint = `Vence el día ${CUTOFF_DAY}`;
+                }
+
+                const row = document.createElement('div');
+                row.className = `alert-row ${borderClass}`;
+                row.innerHTML = `
+                    <div class="player-info" style="flex:1;">
+                        <h4>${p.nombres} ${p.apellidos}</h4>
+                        <p><i class="fas fa-tag"></i> ${getCategoryName(p.id_categoria)} • <i class="fas fa-phone"></i> ${p.telefono || 'N/A'}</p>
+                        <div style="margin-top:5px; font-size:0.8rem; color:var(--text-muted);">
+                            <i class="fas fa-info-circle"></i> ${messageHint}
+                        </div>
+                    </div>
+                    <div style="text-align:right; margin-right:20px;">
+                        <div class="debt-tag">${utils.formatMoney(p.debt)}</div>
+                        <div style="font-size:0.75rem; margin-top:2px; color:var(--text-muted);">${statusLabel}</div>
+                    </div>
+                    <div style="display:flex; gap:8px;">
+                        <button class="btn btn-sm btn-accent" onclick="sendWhatsApp(${p.id}, '${statusLabel}', ${p.debt})" title="Enviar WhatsApp"><i class="fab fa-whatsapp"></i></button>
+                        <button class="btn btn-sm btn-primary" onclick="goToPayment(${p.id})" title="Registrar Pago"><i class="fas fa-dollar-sign"></i></button>
+                    </div>
+                `;
+                container.appendChild(row);
+            });
+
+            renderPagination(totalPages, filteredData.length);
+        }
+
+        function renderPagination(totalPages, totalItems) {
+            const container = document.querySelector('.pagination-controls');
+            container.innerHTML = '';
+            if (totalPages <= 1) return;
+
+            container.innerHTML = `
+                <button class="btn btn-sm btn-secondary" ${currentPage === 1 ? 'disabled' : ''} onclick="changePage(${currentPage - 1})">Anterior</button>
+                <span class="pagination-info">Pág ${currentPage} de ${totalPages}</span>
+                <button class="btn btn-sm btn-secondary" ${currentPage === totalPages ? 'disabled' : ''} onclick="changePage(${currentPage + 1})">Siguiente</button>
+            `;
+        }
+
+        function changePage(page) {
+            if (page < 1) return;
+            currentPage = page;
+            renderList();
+        }
+
+        function getCategoryName(id) {
+            const cat = db.getById('categorias', id);
+            return cat ? cat.nombre : 'Sin Cat.';
+        }
+
+        // --- WHATSAPP EDUCADO ---
+
+        function sendWhatsApp(pid, statusLabel, debt) {
+            const p = db.getById('jugadores', pid);
+            const conf = db.data.configuracion_sistema;
+            const phone = p.telefono ? p.telefono.replace(/\D/g,'') : '';
+
+            if (!phone) return showToast('El jugador no tiene teléfono', 'error');
+
+            // Saludo por hora
+            const hour = new Date().getHours();
+            let greeting = 'Buenas noches';
+            if (hour >= 5 && hour < 12) greeting = 'Buenos días';
+            else if (hour >= 12 && hour < 19) greeting = 'Buenas tardes';
+
+            // Mensaje Contextual
+            let body = `${greeting} ${p.nombres}, le saluda cordialmente el equipo de *${conf.nombre_escuela || 'EFUSA'}*.\n\n`;
+            
+            if (statusLabel === 'Abono Parcial') {
+                body += `Queremos agradecerle por el abono realizado. Sin embargo, nuestro sistema nos indica que aún hace falta un saldo pendiente de *${utils.formatMoney(debt)}* para completar la mensualidad.\n\n`;
+                body += `¿Podría ayudarnos completando el pago? Muchas gracias por su comprensión.`;
+            } else if (statusLabel === 'Vencido') {
+                body += `Pasamos a recordarle amablemente que su mensualidad correspondiente a este mes se encuentra vencida.\n\n`;
+                body += `El saldo pendiente es de *${utils.formatMoney(debt)}*. Por favor, si ya realizó el pago, envíenos el comprobante. De lo contrario, le agradeceríamos mucho regularizar su situación lo antes posible.`;
+            } else {
+                // Por Vencer o Deuda General
+                body += `Le recordamos que el plazo de pago para este mes vence pronto (día ${CUTOFF_DAY}).\n\n`;
+                body += `Su saldo a pagar es de *${utils.formatMoney(debt)}*. Esperamos contar con su colaboración como siempre.`;
+            }
+
+            body += `\n\n¡Que tenga un excelente día!`;
+
+            const url = `https://wa.me/57${phone}?text=${encodeURIComponent(body)}`;
+            window.open(url, '_blank');
+        }
+
+        const goToPayment = (id) => {
+            sessionStorage.setItem('payPlayerId', id);
+            window.location.href = 'pagos.html';
+        };
+    </script>
+</body>
+</html>

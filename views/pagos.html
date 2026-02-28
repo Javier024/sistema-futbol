@@ -2,28 +2,608 @@
 <html lang="es">
 <head>
     <meta charset="UTF-8">
-    <title>Pagos - Futbol Manager</title>
+    <title>Gestión de Pagos - EFUSA</title>
     <link rel="stylesheet" href="../assets/css/styles.css">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        /* Estilos específicos para esta vista */
+        .payment-summary-box {
+            background: #f8fafc;
+            border: 1px dashed #cbd5e1;
+            padding: 15px;
+            border-radius: 8px;
+            margin-top: 10px;
+            text-align: center;
+        }
+        .payment-summary-box .big-amount {
+            font-size: 1.8rem;
+            font-weight: 800;
+            color: var(--primary);
+        }
+        .payment-summary-box .next-date {
+            font-size: 0.9rem;
+            color: var(--text-muted);
+            margin-top: 5px;
+        }
+        
+        /* Estilos para Paginación */
+        .pagination-controls {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            gap: 10px;
+            margin-top: 15px;
+            padding-top: 15px;
+            border-top: 1px solid var(--border);
+        }
+        .pagination-info {
+            font-size: 0.9rem;
+            font-weight: 600;
+            color: var(--text-muted);
+        }
+        
+        /* Estilos para impresión de reportes */
+        @media print {
+            body * { visibility: hidden; }
+            #print-area, #print-area * { visibility: visible; }
+            #print-area {
+                position: absolute;
+                left: 0;
+                top: 0;
+                width: 100%;
+                background: white;
+                color: black;
+                padding: 20px;
+                z-index: 9999;
+            }
+            .no-print { display: none !important; }
+        }
+    </style>
 </head>
 <body>
-    <div id="app-layout"><div id="sidebar-placeholder"></div><main><header><h1>Gestión de Pagos</h1></header><div id="view-container" style="height:100%;"></div></main></div>
-    <div id="modal" class="modal-overlay"><div class="modal-box"><div class="modal-header"><h3 id="modal-title">Título</h3><button onclick="closeModal()" class="btn btn-sm btn-secondary"><i class="fas fa-times"></i></button></div><div id="modal-content"></div></div></div>
+    <div id="app-layout">
+        <div id="sidebar-placeholder"></div>
+        <main>
+            <header>
+                <h1>Gestión de Pagos</h1>
+                <div style="display:flex; gap:10px;">
+                    <button class="btn btn-accent" onclick="printReport()"><i class="fas fa-print"></i> Imprimir Reporte</button>
+                    <button class="btn btn-success" style="background:#107c41" onclick="exportToExcel()"><i class="fas fa-file-excel"></i> Excel</button>
+                </div>
+            </header>
+            
+            <div id="view-container">
+                <div class="grid-2" style="height: 100%;">
+                    
+                    <!-- PANEL IZQUIERDO: REGISTRO DE PAGO -->
+                    <div class="card" style="display:flex; flex-direction:column; height:100%;">
+                        <h3><i class="fas fa-cash-register"></i> Registrar Pago</h3>
+                        
+                        <form id="payment-form" onsubmit="handlePaymentSubmit(event)">
+                            <div class="form-group">
+                                <label>Seleccionar Jugador (Con Deuda)</label>
+                                <select id="pay-player" required onchange="updatePlayerInfo()">
+                                    <option value="">-- Buscar jugador --</option>
+                                    <!-- Se llena con JS -->
+                                </select>
+                                <small id="current-status-hint" style="color:var(--text-muted); display:block; margin-top:5px;"></small>
+                            </div>
+
+                            <div class="form-group">
+                                <label>Cantidad de Meses a Pagar</label>
+                                <div style="display:flex; gap:10px;">
+                                    <select id="pay-months" onchange="calculateTotal()" style="flex:1;">
+                                        <option value="1">1 Mes</option>
+                                        <option value="2">2 Meses</option>
+                                        <option value="3">3 Meses</option>
+                                        <option value="4">4 Meses</option>
+                                        <option value="5">5 Meses</option>
+                                        <option value="6">6 Meses (Semestre)</option>
+                                        <option value="12">12 Meses (Año)</option>
+                                    </select>
+                                    <input type="number" id="pay-amount-override" placeholder="Otro monto" style="flex:1" oninput="document.getElementById('pay-months').value=''">
+                                </div>
+                            </div>
+
+                            <div class="payment-summary-box">
+                                <div>Total a Pagar</div>
+                                <div class="big-amount" id="display-total">$0</div>
+                                <div class="next-date" id="display-next-date">Próximo vencimiento: -</div>
+                            </div>
+
+                            <div class="grid-2" style="margin-top:15px;">
+                                <div class="form-group">
+                                    <label>Fecha de Pago</label>
+                                    <input type="date" id="pay-date" required>
+                                </div>
+                                <div class="form-group">
+                                    <label>Método</label>
+                                    <select id="pay-method">
+                                        <option>Efectivo</option>
+                                        <option>Transferencia</option>
+                                        <option>Nequi/Daviplata</option>
+                                        <option>Tarjeta</option>
+                                    </select>
+                                </div>
+                            </div>
+
+                            <button type="submit" class="btn btn-primary btn-block" style="margin-top:auto;">
+                                <i class="fas fa-check-circle"></i> Confirmar Pago
+                            </button>
+                        </form>
+                    </div>
+
+                    <!-- PANEL DERECHO: LISTADO Y FILTROS -->
+                    <div class="card" style="display:flex; flex-direction:column; height:100%; overflow:hidden;">
+                        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:15px; flex-wrap:wrap; gap:10px;">
+                            <h3>Estado de Cuenta</h3>
+                            <div style="display:flex; gap:10px;">
+                                <select id="filter-category" onchange="resetAndRender()" style="width:auto; padding:5px 10px;">
+                                    <option value="all">Todas las Categorías</option>
+                                    <!-- Se llena con JS -->
+                                </select>
+                                <select id="filter-status" onchange="resetAndRender()" style="width:auto; padding:5px 10px;">
+                                    <option value="debt">Con Deuda</option>
+                                    <option value="all">Todos (Histórico)</option>
+                                    <option value="paid">Al día</option>
+                                </select>
+                            </div>
+                        </div>
+
+                        <div class="table-container" style="flex:1; overflow-y:auto;">
+                            <table id="payments-table">
+                                <thead>
+                                    <tr>
+                                        <th>Jugador</th>
+                                        <th>Cat.</th>
+                                        <th>Estado</th>
+                                        <th>Deuda Actual</th>
+                                        <th style="text-align:right;">Acciones</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="table-body">
+                                    <!-- Se llena con JS -->
+                                </tbody>
+                            </table>
+                        </div>
+
+                        <!-- Controles de Paginación -->
+                        <div class="pagination-controls" id="pagination-controls">
+                            <!-- Se llena con JS -->
+                        </div>
+                        
+                        <!-- Área oculta para impresión -->
+                        <div id="print-area" style="display:none;">
+                            <!-- Se llena dinámicamente al imprimir -->
+                        </div>
+                    </div>
+
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <!-- Modal Historial -->
+    <div id="modal-history" class="modal-overlay">
+        <div class="modal-box">
+            <div class="modal-header">
+                <h3>Historial de Pagos</h3>
+                <button onclick="document.getElementById('modal-history').classList.remove('active')" class="btn btn-sm btn-secondary"><i class="fas fa-times"></i></button>
+            </div>
+            <div id="history-content" style="max-height:400px; overflow-y:auto;"></div>
+        </div>
+    </div>
+
     <div id="toast-container"></div>
     <script src="../assets/js/common.js"></script>
     <script>
-        window.addEventListener('DOMContentLoaded', () => { if(!checkAuth()) return; renderSidebar('pagos'); loadPayments(); const pid = sessionStorage.getItem('payPlayerId'); if(pid) { setTimeout(()=>{ const s=document.getElementById('pay-player'); if(s){ s.value=pid; updatePaymentInfo(); } sessionStorage.removeItem('payPlayerId'); }, 100); } });
-        function loadPayments() {
-            const rows = db.getAll('pagos').sort((a,b) => new Date(b.fecha_pago) - new Date(a.fecha_pago)).map(p => { const pl = db.getById('jugadores', p.id_jugador); return `<tr><td>${utils.formatDate(p.fecha_pago)}</td><td>${pl ? pl.nombres+' '+pl.apellidos : 'Eliminado'}</td><td>${utils.formatMoney(p.monto)}</td><td>${p.metodo_pago}</td><td><button class="btn btn-sm btn-accent" onclick="genRec(${p.id})"><i class="fas fa-print"></i></button> <button class="btn btn-sm btn-danger" onclick="delPay(${p.id})"><i class="fas fa-trash"></i></button></td></tr>`; }).join('');
-            document.getElementById('view-container').innerHTML = `<div class="grid-2" style="height:100%;"><div class="card"><h3>Registrar</h3><form onsubmit="subPay(event)"><div class="form-group"><label>Jugador</label><select id="pay-player" required onchange="upPayInfo()"></select></div><div class="form-group"><label>Monto</label><input type="number" id="pay-amount" required oninput="calcMonths()"><small id="pay-calc" style="color:var(--accent);"></small></div><div class="grid-2"><div class="form-group"><label>Fecha</label><input type="date" id="pay-date" required></div><div class="form-group"><label>Método</label><select id="pay-method"><option>Efectivo</option><option>Transferencia</option></select></div></div><button class="btn btn-primary btn-block">Procesar</button></form></div><div class="card" style="display:flex; flex-direction:column;"><h3>Historial</h3><div class="table-container" style="flex:1;"><table><thead><tr><th>Fecha</th><th>Jugador</th><th>Monto</th><th></th></tr></thead><tbody>${rows||'<'+'tr><td colspan="4">Sin pagos</td></tr>'}</tbody></table></div></div></div>`;
-            const sel = document.getElementById('pay-player'); db.getAll('jugadores').forEach(p => { const o = document.createElement('option'); o.value=p.id; o.text=`${p.nombres} ${p.apellidos}`; sel.appendChild(o); });
-            document.getElementById('pay-date').valueAsDate = new Date(); upPayInfo();
+        // Variables de estado para Paginación
+        let currentPage = 1;
+        const rowsPerPage = 5; // Cambiar este número para mostrar más/menos filas
+        let filteredDataCache = []; // Almacena todos los datos filtrados para exportar
+
+        window.addEventListener('DOMContentLoaded', async () => {
+            if(!checkAuth()) return;
+            renderSidebar('pagos');
+            
+            // Inicializar fecha
+            document.getElementById('pay-date').valueAsDate = new Date();
+
+            // Cargar datos iniciales
+            await db.init();
+            
+            // Llenar filtros y selectores
+            populateFilters();
+            
+            // Renderizar tabla inicial
+            renderTable();
+        });
+
+        // --- LÓGICA DE DATOS ---
+
+        function populateFilters() {
+            const cats = db.data.categorias || [];
+            const catSelect = document.getElementById('filter-category');
+            const paySelect = document.getElementById('pay-player');
+
+            // Llenar filtro de categorías
+            cats.forEach(c => {
+                const opt = document.createElement('option');
+                opt.value = c.id;
+                opt.innerText = c.nombre;
+                catSelect.appendChild(opt);
+            });
+
+            // Llenar selector de jugadores para pago
+            updatePlayerSelect();
         }
-        const upPayInfo = () => { const pid = document.getElementById('pay-player').value; if(!pid) return; const s = finance.getPlayerStatus(pid); const inp = document.getElementById('pay-amount'); const h = document.getElementById('pay-calc'); if(s.status==='debt'){ inp.value=s.fee; h.innerText=`Deuda: ${utils.formatMoney(s.fee)}`; } else if(s.status==='partial'){ inp.value=s.debt; h.innerText=`Falta: ${utils.formatMoney(s.debt)}`; } else { h.innerText="Al día."; } calcMonths(); };
-        const calcMonths = () => { const amt = parseFloat(document.getElementById('pay-amount').value)||0; const fee = parseFloat(db.getAll('configuracion_sistema')[0].valor_mensual); if(fee>0 && amt>=fee){ const m = Math.floor(amt/fee); let d = new Date(); d.setMonth(d.getMonth()+m); document.getElementById('pay-calc').innerHTML=`Cubre <b>${m} meses</b>. Vence: <b>${utils.formatDate(d)}</b>`; } else if(amt>0) document.getElementById('pay-calc').innerText="Parcial."; else document.getElementById('pay-calc').innerText=""; };
-        const subPay = (e) => { e.preventDefault(); finance.registerPayment(document.getElementById('pay-player').value, document.getElementById('pay-amount').value, document.getElementById('pay-date').value, document.getElementById('pay-method').value, ''); showToast('Registrado'); loadPayments(); };
-        const delPay = (id) => { if(confirm('¿Eliminar?')) { db.getAll('aplicacion_pagos').filter(a=>a.id_pago==id).forEach(a=>db.delete('aplicacion_pagos',a.id)); db.delete('pagos', id); showToast('Eliminado'); loadPayments(); } };
-        const genRec = (id) => { const p = db.getById('pagos', id); const pl = db.getById('jugadores', p.id_jugador); const conf = db.getAll('configuracion_sistema')[0]; const ac = db.getById('acudientes', pl.id_acudiente); openModal('Recibo', `<div class="receipt"><div class="receipt-header"><h2>${conf.nombre_escuela.toUpperCase()}</h2><p>#REC-${p.id}</p></div><div class="receipt-row"><span>Fecha:</span><span>${utils.formatDate(p.fecha_pago)}</span></div><div class="receipt-row"><span>De:</span><span>${ac?ac.nombre:pl.nombres}</span></div><div class="receipt-row"><span>Concepto:</span><span>${pl.nombres} ${pl.apellidos}</span></div><div class="receipt-total"><span>TOTAL:</span><span>${utils.formatMoney(p.monto)}</span></div></div><div class="no-print" style="text-align:center;margin-top:20px;"><button class="btn btn-primary" onclick="window.print()">Imprimir</button></div>`); };
+
+        function updatePlayerSelect() {
+            const select = document.getElementById('pay-player');
+            select.innerHTML = '<option value="">-- Buscar jugador --</option>';
+            
+            const players = db.data.jugadores || [];
+            players.forEach(p => {
+                const opt = document.createElement('option');
+                opt.value = p.id;
+                opt.innerText = `${p.nombres} ${p.apellidos}`;
+                select.appendChild(opt);
+            });
+        }
+
+        function getFilteredData() {
+            const catId = document.getElementById('filter-category').value;
+            const statusFilter = document.getElementById('filter-status').value;
+            
+            let players = db.data.jugadores || [];
+            const config = db.data.configuracion_sistema || { valor_mensual: 0 };
+
+            // 1. Filtrar por categoría
+            if (catId !== 'all') {
+                players = players.filter(p => p.id_categoria == catId);
+            }
+
+            // 2. Calcular estado financiero de cada jugador
+            const enrichedPlayers = players.map(p => {
+                const status = finance.getPlayerStatus(p.id);
+                return { ...p, ...status };
+            });
+
+            // 3. Filtrar por estado
+            if (statusFilter === 'debt') {
+                return enrichedPlayers.filter(p => p.status !== 'paid');
+            } else if (statusFilter === 'paid') {
+                return enrichedPlayers.filter(p => p.status === 'paid');
+            }
+            
+            return enrichedPlayers;
+        }
+
+        // Función auxiliar para resetear página y renderizar
+        function resetAndRender() {
+            currentPage = 1;
+            renderTable();
+        }
+
+        function renderTable() {
+            // Obtener todos los datos filtrados y guardar en caché global
+            filteredDataCache = getFilteredData();
+            
+            const tbody = document.getElementById('table-body');
+            tbody.innerHTML = '';
+
+            if (filteredDataCache.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; padding:20px;">No se encontraron registros con estos filtros.</td></tr>';
+                document.getElementById('pagination-controls').innerHTML = '';
+                return;
+            }
+
+            // Cálculo de paginación
+            const totalPages = Math.ceil(filteredDataCache.length / rowsPerPage);
+            if (currentPage > totalPages) currentPage = 1;
+            
+            const start = (currentPage - 1) * rowsPerPage;
+            const end = start + rowsPerPage;
+            const pageData = filteredDataCache.slice(start, end);
+
+            // Renderizar filas de la página actual
+            pageData.forEach(p => {
+                let badgeClass = 'bg-red';
+                let statusText = 'Debe Pagar';
+                
+                if (p.status === 'paid') {
+                    badgeClass = 'bg-green';
+                    statusText = 'Al Día';
+                } else if (p.status === 'partial') {
+                    badgeClass = 'bg-yellow';
+                    statusText = 'Abonó Parcial';
+                }
+
+                const rowHtml = `
+                    <tr>
+                        <td>
+                            <strong>${p.nombres} ${p.apellidos}</strong><br>
+                            <small class="text-muted">Tel: ${p.telefono || 'N/A'}</small>
+                        </td>
+                        <td>${getCategoryName(p.id_categoria)}</td>
+                        <td><span class="badge ${badgeClass}">${statusText}</span></td>
+                        <td style="font-weight:bold;">${p.debt > 0 ? utils.formatMoney(p.debt) : '-'}</td>
+                        <td style="text-align:right;">
+                            <button class="btn btn-sm btn-accent" onclick="sendWhatsApp(${p.id}, '${p.status}', ${p.debt})" title="Enviar WhatsApp"><i class="fab fa-whatsapp"></i></button>
+                            <button class="btn btn-sm btn-secondary" onclick="showHistory(${p.id})" title="Ver Historial"><i class="fas fa-history"></i></button>
+                            ${p.debt > 0 ? `<button class="btn btn-sm btn-primary" onclick="selectForPayment(${p.id})" title="Pagar Ahora"><i class="fas fa-dollar-sign"></i></button>` : ''}
+                        </td>
+                    </tr>
+                `;
+                tbody.innerHTML += rowHtml;
+            });
+
+            // Renderizar controles de paginación
+            renderPaginationControls(totalPages, filteredDataCache.length);
+        }
+
+        function renderPaginationControls(totalPages, totalItems) {
+            const container = document.getElementById('pagination-controls');
+            container.innerHTML = '';
+
+            if (totalPages <= 1) return;
+
+            // Botón Anterior
+            const prevBtn = `<button class="btn btn-sm btn-secondary" ${currentPage === 1 ? 'disabled' : ''} onclick="changePage(${currentPage - 1})"><i class="fas fa-chevron-left"></i> Anterior</button>`;
+            
+            // Texto informativo
+            const info = `<span class="pagination-info">Página ${currentPage} de ${totalPages} (${totalItems} registros)</span>`;
+
+            // Botón Siguiente
+            const nextBtn = `<button class="btn btn-sm btn-secondary" ${currentPage === totalPages ? 'disabled' : ''} onclick="changePage(${currentPage + 1})">Siguiente <i class="fas fa-chevron-right"></i></button>`;
+
+            container.innerHTML = prevBtn + info + nextBtn;
+        }
+
+        function changePage(page) {
+            if (page < 1) return;
+            currentPage = page;
+            renderTable();
+        }
+
+        // --- LÓGICA DEL FORMULARIO ---
+
+        function updatePlayerInfo() {
+            const pid = document.getElementById('pay-player').value;
+            const hint = document.getElementById('current-status-hint');
+            
+            if (!pid) {
+                hint.innerText = '';
+                calculateTotal();
+                return;
+            }
+
+            const s = finance.getPlayerStatus(pid);
+            
+            if (s.status === 'paid') {
+                hint.innerHTML = `<span style="color:var(--primary)">✅ El jugador está al día. Pago anticipado.</span>`;
+            } else if (s.status === 'partial') {
+                hint.innerHTML = `<span style="color:var(--warning)">⚠️ Tiene un abono de ${utils.formatMoney(s.paid)}. Debe faltante: ${utils.formatMoney(s.debt)}</span>`;
+            } else {
+                hint.innerHTML = `<span style="color:var(--danger)">❌ Deuda total del mes actual: ${utils.formatMoney(s.debt)}</span>`;
+            }
+
+            calculateTotal();
+        }
+
+        function calculateTotal() {
+            const months = parseInt(document.getElementById('pay-months').value) || 0;
+            const override = document.getElementById('pay-amount-override').value;
+            const config = db.data.configuracion_sistema;
+            
+            let total = 0;
+            let nextDateText = '';
+
+            if (override) {
+                total = parseFloat(override);
+                nextDateText = 'Pago personalizado';
+            } else if (months > 0 && config) {
+                const fee = parseFloat(config.valor_mensual);
+                total = months * fee;
+                const d = new Date();
+                d.setMonth(d.getMonth() + months);
+                nextDateText = `Cubre hasta: ${utils.formatDate(d)}`;
+            }
+
+            document.getElementById('display-total').innerText = utils.formatMoney(total);
+            document.getElementById('display-next-date').innerText = nextDateText;
+        }
+
+        function selectForPayment(id) {
+            document.getElementById('pay-player').value = id;
+            updatePlayerInfo();
+            if(window.innerWidth < 768) {
+                document.querySelector('.grid-2').firstElementChild.scrollIntoView({behavior:'smooth'});
+            }
+        }
+
+        async function handlePaymentSubmit(e) {
+            e.preventDefault();
+            const pid = document.getElementById('pay-player').value;
+            if(!pid) return showToast('Seleccione un jugador', 'error');
+
+            const months = document.getElementById('pay-months').value;
+            const override = document.getElementById('pay-amount-override').value;
+            
+            let amount = 0;
+            if (override) amount = parseFloat(override);
+            else {
+                const fee = parseFloat(db.data.configuracion_sistema.valor_mensual);
+                amount = fee * parseInt(months);
+            }
+
+            const paymentData = {
+                id_jugador: pid,
+                monto: amount,
+                fecha_pago: document.getElementById('pay-date').value,
+                metodo_pago: document.getElementById('pay-method').value,
+                notas: months ? `Pago por ${months} mes(es)` : 'Pago manual'
+            };
+
+            try {
+                await db.add('pagos', paymentData);
+                showToast('Pago registrado exitosamente', 'success');
+                
+                // Resetear formulario
+                document.getElementById('payment-form').reset();
+                document.getElementById('pay-date').valueAsDate = new Date();
+                calculateTotal();
+                
+                // Recargar tabla (se queda en la página actual o resetea según preferencia, aquí reseteamos para ver cambios)
+                resetAndRender();
+            } catch (err) {
+                showToast('Error al guardar pago', 'error');
+                console.error(err);
+            }
+        }
+
+        // --- UTILIDADES ---
+
+        function getCategoryName(id) {
+            const cat = db.getById('categorias', id);
+            return cat ? cat.nombre : 'N/A';
+        }
+
+        function showHistory(pid) {
+            const p = db.getById('jugadores', pid);
+            const allPayments = db.data.pagos || [];
+            const history = allPayments.filter(pay => pay.id_jugador == pid).sort((a,b) => new Date(b.fecha_pago) - new Date(a.fecha_pago));
+
+            const html = `
+                <h4>Historial: ${p.nombres} ${p.apellidos}</h4>
+                <table style="width:100%; margin-top:10px;">
+                    <thead><tr><th>Fecha</th><th>Monto</th><th>Método</th><th>Acción</th></tr></thead>
+                    <tbody>
+                        ${history.map(h => `
+                            <tr>
+                                <td>${utils.formatDate(h.fecha_pago)}</td>
+                                <td>${utils.formatMoney(h.monto)}</td>
+                                <td>${h.metodo_pago}</td>
+                                <td><button class="btn btn-sm btn-danger" onclick="deletePayment(${h.id})"><i class="fas fa-trash"></i></button></td>
+                            </tr>
+                        `).join('')}
+                        ${history.length === 0 ? '<tr><td colspan="4" style="text-align:center;">Sin pagos registrados</td></tr>' : ''}
+                    </tbody>
+                </table>
+            `;
+            document.getElementById('history-content').innerHTML = html;
+            document.getElementById('modal-history').classList.add('active');
+        }
+
+        async function deletePayment(id) {
+            if(!confirm('¿Estás seguro de eliminar este pago? Esto afectará la deuda del jugador.')) return;
+            
+            try {
+                await db.delete('pagos', id);
+                showToast('Pago eliminado', 'success');
+                document.getElementById('modal-history').classList.remove('active');
+                resetAndRender();
+            } catch(e) {
+                showToast('Error al eliminar', 'error');
+            }
+        }
+
+        // --- WHATSAPP INTELIGENTE ---
+
+        function sendWhatsApp(pid, status, debt) {
+            const p = db.getById('jugadores', pid);
+            const conf = db.data.configuracion_sistema;
+            const phone = p.telefono ? p.telefono.replace(/\D/g,'') : ''; 
+
+            if (!phone) return showToast('El jugador no tiene teléfono registrado', 'error');
+
+            const hour = new Date().getHours();
+            let greeting = 'Buenas noches';
+            if (hour >= 5 && hour < 12) greeting = 'Buenos días';
+            else if (hour >= 12 && hour < 19) greeting = 'Buenas tardes';
+
+            let message = `${greeting} ${p.nombres}, le saluda el equipo de *${conf.nombre_escuela || 'EFUSA'}*.\n\n`;
+            
+            if (status === 'paid') {
+                message += `Queremos informarle que su mensualidad está **al día**. ¡Gracias por su compromiso!`;
+            } else if (status === 'partial') {
+                message += `Hemos recibido un abono a su cuenta, sin embargo, recuerda que tienes un saldo pendiente de *${utils.formatMoney(debt)}*.\n\nTe agradeceríamos mucho completar el pago a la brevedad posible.`;
+            } else {
+                message += `Pasamos a recordarte amablemente que tienes una mensualidad pendiente de *${utils.formatMoney(debt)}*.\n\nPor favor, si ya lo realizaste, envíanos el comprobante. De lo contrario, puedes hacerlo mediante Efectivo, Nequi o Transferencia.`;
+            }
+            
+            message += `\n\n¡Muchas gracias y bendiciones!`;
+
+            const url = `https://wa.me/57${phone}?text=${encodeURIComponent(message)}`;
+            window.open(url, '_blank');
+        }
+
+        // --- REPORTES Y EXPORTACIÓN ---
+
+        function printReport() {
+            // Generar HTML de impresión usando todos los datos filtrados (no solo la página actual)
+            if(filteredDataCache.length === 0) return showToast('No hay datos para imprimir', 'error');
+
+            let rowsHtml = '';
+            filteredDataCache.forEach(p => {
+                let badgeClass = 'bg-red';
+                let statusText = 'Debe Pagar';
+                if (p.status === 'paid') { badgeClass = 'bg-green'; statusText = 'Al Día'; }
+                else if (p.status === 'partial') { badgeClass = 'bg-yellow'; statusText = 'Abonó Parcial'; }
+
+                rowsHtml += `
+                    <tr style="border-bottom: 1px solid #000;">
+                        <td style="border:1px solid #000; padding:8px;">${p.nombres} ${p.apellidos}</td>
+                        <td style="border:1px solid #000; padding:8px;">${getCategoryName(p.id_categoria)}</td>
+                        <td style="border:1px solid #000; padding:8px;">${statusText}</td>
+                        <td style="border:1px solid #000; padding:8px;">${p.debt > 0 ? utils.formatMoney(p.debt) : '$0'}</td>
+                    </tr>
+                `;
+            });
+
+            const printArea = document.getElementById('print-area');
+            printArea.innerHTML = `
+                <h2 style="text-align:center; margin-bottom:10px;">Reporte de Pagos - EFUSA</h2>
+                <p style="text-align:center; margin-bottom:20px;">Fecha: ${new Date().toLocaleDateString()}</p>
+                <table style="width:100%; border-collapse: collapse; border: 1px solid #000;">
+                    <thead>
+                        <tr style="background:#eee;">
+                            <th style="border:1px solid #000; padding:8px;">Jugador</th>
+                            <th style="border:1px solid #000; padding:8px;">Categoría</th>
+                            <th style="border:1px solid #000; padding:8px;">Estado</th>
+                            <th style="border:1px solid #000; padding:8px;">Deuda</th>
+                        </tr>
+                    </thead>
+                    <tbody>${rowsHtml}</tbody>
+                </table>
+            `;
+            
+            window.print();
+        }
+
+        function exportToExcel() {
+            if (filteredDataCache.length === 0) return showToast('No hay datos para exportar', 'error');
+
+            let csvContent = "data:text/csv;charset=utf-8,";
+            csvContent += "Jugador,Categoria,Estado,Deuda\n"; 
+
+            filteredDataCache.forEach(p => {
+                const name = `${p.nombres} ${p.apellidos}`; 
+                const cat = getCategoryName(p.id_categoria);
+                const status = p.status === 'paid' ? 'Al Día' : (p.status === 'partial' ? 'Abonó Parcial' : 'Debe Pagar');
+                const debt = p.debt > 0 ? p.debt : 0;
+
+                csvContent += `"${name}","${cat}","${status}","${debt}"\n`;
+            });
+
+            const encodedUri = encodeURI(csvContent);
+            const link = document.createElement("a");
+            link.setAttribute("href", encodedUri);
+            link.setAttribute("download", `reporte_pagos_efusa_${new Date().toISOString().split('T')[0]}.csv`);
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+        }
     </script>
 </body>
 </html>

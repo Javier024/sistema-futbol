@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <title>Prueba API Jugadores</title>
+</head>
+<body>
+
+<h2>Registrar Jugador</h2>
+
+<input type="text" id="nombres" placeholder="Nombres"><br><br>
+<input type="text" id="apellidos" placeholder="Apellidos"><br><br>
+<input type="date" id="fecha_nacimiento"><br><br>
+<input type="text" id="tipo_sangre" placeholder="Tipo de sangre"><br><br>
+<input type="text" id="telefono" placeholder="Teléfono"><br><br>
+
+<button onclick="crearJugador()">Guardar Jugador</button>
+
+<hr>
+
+<button onclick="verJugadores()">Ver Jugadores</button>
+
+<pre id="resultado"></pre>
+
+<script>
+async function crearJugador() {
+    const jugador = {
+        nombres: document.getElementById('nombres').value,
+        apellidos: document.getElementById('apellidos').value,
+        fecha_nacimiento: document.getElementById('fecha_nacimiento').value,
+        tipo_sangre: document.getElementById('tipo_sangre').value,
+        telefono: document.getElementById('telefono').value
+    };
+
+    try {
+        const response = await fetch('http://localhost:3000/api/jugadores', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(jugador)
+        });
+
+        const data = await response.json();
+        document.getElementById('resultado').textContent = JSON.stringify(data, null, 2);
+
+    } catch (error) {
+        document.getElementById('resultado').textContent = "Error: " + error;
+    }
+}
+
+async function verJugadores() {
+    try {
+        const response = await fetch('http://localhost:3000/api/jugadores');
+        const data = await response.json();
+        document.getElementById('resultado').textContent = JSON.stringify(data, null, 2);
+
+    } catch (error) {
+        document.getElementById('resultado').textContent = "Error: " + error;
+    }
+}
+</script>
+
+</body>
+</html>

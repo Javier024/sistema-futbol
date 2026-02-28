@@ -1,15 +1,283 @@
 <!DOCTYPE html>
 <html lang="es">
-<head><meta charset="UTF-8"><title>Asistencias</title><link rel="stylesheet" href="../assets/css/styles.css"><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css"></head>
-<body><div id="app-layout"><div id="sidebar-placeholder"></div><main><header><h1>Asistencias</h1></header><div id="view-container" style="height:100%;"></div></main></div><div id="toast-container"></div>
-<script src="../assets/js/common.js"></script><script>
-window.addEventListener('DOMContentLoaded', () => { if(!checkAuth()) return; renderSidebar('asistencias'); loadAttView(); });
-function loadAttView() {
-    const cats = db.getAll('categorias');
-    document.getElementById('view-container').innerHTML = `<div class="grid-2"><div class="card"><h3>Tomar</h3><div class="form-group"><label>Fecha</label><input type="date" id="ad" onchange="loadL()"></div><div class="form-group"><label>Cat</label><select id="ac" onchange="loadL()"><option value="all">Todas</option>${cats.map(c=>`<option value="${c.id}">${c.nombre}</option>`).join('')}</select></div><div id="al" style="max-height:400px;overflow-y:auto;"></div><button class="btn btn-primary btn-block" style="margin-top:15px;" onclick="saveA()">Guardar</button></div><div class="card"><h3>Resumen</h3><div id="as"></div></div></div>`;
-    document.getElementById('ad').valueAsDate = new Date(); loadL(); loadH();
-}
-const loadL = () => { const d = document.getElementById('ad').value; const cid = document.getElementById('ac').value; let pl = db.getAll('jugadores'); if(cid!=='all') pl=pl.filter(p=>p.id_categoria==cid); const ex = db.getAll('asistencias').filter(a=>a.fecha===d); const h = pl.map(p => { const r = ex.find(e=>e.id_jugador==p.id); const ip = r?r.estado==='P':true; return `<div class="attendance-toggle"><div style="flex:1;font-weight:600;">${p.nombres} ${p.apellidos}</div><div style="display:flex;gap:10px;"><label><input type="radio" name="a_${p.id}" value="P" ${ip?'checked':''}> P</label><label><input type="radio" name="a_${p.id}" value="A" ${!ip?'checked':''}> A</label></div></div>`; }).join(''); document.getElementById('al').innerHTML = h||'<p style="padding:10px;text-align:center;">Sin jugadores</p>'; };
-const saveA = () => { const d = document.getElementById('ad').value; if(!d) return; db.getAll('asistencias').filter(a=>a.fecha===d).forEach(r=>db.delete('asistencias',r.id)); const cid = document.getElementById('ac').value; let pl = db.getAll('jugadores'); if(cid!=='all') pl=pl.filter(p=>p.id_categoria==cid); pl.forEach(p => { const rs = document.getElementsByName(`a_${p.id}`); let v='A'; for(let r of rs) if(r.checked) v=r.value; db.add('asistencias', {id_jugador:p.id, fecha:d, estado:v}); }); showToast('Guardado'); loadH(); };
-const loadH = () => { const r = db.getAll('asistencias'); const g={}; r.forEach(x => { if(!g[x.fecha]) g[x.fecha]={P:0,A:0}; g[x.fecha][x.estado]++; }); const rw = Object.keys(g).sort().reverse().slice(0,5).map(d => `<tr><td>${utils.formatDate(d)}</td><td><span class="badge bg-green">${g[d].P}</span></td><td><span class="badge bg-red">${g[d].A}</span></td></tr>`).join(''); document.getElementById('as').innerHTML = `<table><thead><tr><th>Fecha</th><th>P</th><th>A</th></tr></thead><tbody>${rw||'<'+'tr><td colspan="3">Sin datos</td></tr>'}</tbody></table>`; };
-</script></body></html>
+<head>
+    <meta charset="UTF-8">
+    <title>Asistencias</title>
+    <link rel="stylesheet" href="../assets/css/styles.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        .attendance-row { 
+            display: flex; 
+            align-items: center; 
+            justify-content: space-between; 
+            padding: 12px 10px; 
+            border-bottom: 1px solid var(--border); 
+            background: var(--bg-card);
+        }
+        .attendance-row:last-child { border-bottom: none; }
+        .player-info { font-weight: 600; color: var(--text-main); }
+        .player-sub { font-size: 0.8rem; color: var(--text-muted); }
+        
+        .radio-group { display: flex; gap: 15px; }
+        .radio-label { 
+            cursor: pointer; 
+            display: flex; 
+            align-items: center; 
+            gap: 5px; 
+            font-weight: normal; 
+            padding: 5px 10px; 
+            border-radius: 20px; 
+            transition: 0.2s;
+            border: 1px solid transparent;
+        }
+        /* Efecto visual al seleccionar */
+        input[type="radio"]:checked + span {
+            font-weight: bold;
+        }
+        input[type="radio"]:checked + span.badge-p { background: #d1fae5; color: #065f46; }
+        input[type="radio"]:checked + span.badge-a { background: #fee2e2; color: #991b1b; }
+        input[type="radio"]:checked + span.badge-e { background: #fef3c7; color: #92400e; }
+
+    </style>
+</head>
+<body>
+    <div id="app-layout">
+        <div id="sidebar-placeholder"></div>
+        <main>
+            <header>
+                <h1>Control de Asistencia</h1>
+            </header>
+            <div id="view-container" style="height:100%; display:flex; flex-direction:column;"></div>
+        </main>
+    </div>
+    <div id="toast-container"></div>
+    <script src="../assets/js/common.js"></script>
+    <script>
+        let allAttendanceCache = []; // Caché local de todas las asistencias
+
+        window.addEventListener('DOMContentLoaded', async () => { 
+            if(!checkAuth()) return; 
+            renderSidebar('asistencias'); 
+            
+            // Cargar todas las asistencias una vez al inicio para filtrar en cliente
+            // (Más rápido que muchas peticiones a la API)
+            try {
+                const res = await fetch('/api/asistencias');
+                allAttendanceCache = await res.json();
+            } catch(e) { console.error(e); }
+
+            await loadAttView(); 
+        });
+
+        async function loadAttView() {
+            const cats = await db.getAll('categorias');
+            
+            document.getElementById('view-container').innerHTML = `
+                <div class="grid-2" style="height:100%; overflow:hidden;">
+                    <!-- Panel Izquierdo: Toma de Asistencia -->
+                    <div class="card" style="display:flex; flex-direction:column; height:100%; overflow:hidden;">
+                        <div style="padding-bottom:15px; border-bottom:1px solid var(--border); margin-bottom:10px;">
+                            <h3>Tomar Lista</h3>
+                            <div class="grid-2">
+                                <div class="form-group" style="margin-bottom:0;">
+                                    <label>Fecha</label>
+                                    <input type="date" id="att-date" onchange="loadList()">
+                                </div>
+                                <div class="form-group" style="margin-bottom:0;">
+                                    <label>Categoría</label>
+                                    <select id="att-cat" onchange="loadList()">
+                                        <option value="all">Todas</option>
+                                        ${cats.map(c=>`<option value="${c.id}">${c.nombre}</option>`).join('')}
+                                    </select>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div id="player-list" style="flex:1; overflow-y:auto; border:1px solid var(--border); border-radius:var(--radius);">
+                            <!-- Lista JS -->
+                        </div>
+
+                        <div style="margin-top:15px;">
+                            <button class="btn btn-primary btn-block" onclick="saveAttendance()">
+                                <i class="fas fa-save"></i> Guardar Asistencia
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Panel Derecho: Resumen -->
+                    <div class="card">
+                        <h3>Resumen del Día</h3>
+                        <div id="summary-stats" style="text-align:center; padding:20px;">
+                            <p style="color:var(--text-muted)">Selecciona una fecha y categoría para ver el resumen.</p>
+                        </div>
+                    </div>
+                </div>
+            `;
+            
+            document.getElementById('att-date').valueAsDate = new Date();
+            loadList();
+        }
+
+        const loadList = async () => {
+            const date = document.getElementById('att-date').value;
+            const catId = document.getElementById('att-cat').value;
+            
+            if (!date) return;
+
+            // 1. Filtrar jugadores
+            let players = await db.getAll('jugadores');
+            if (catId !== 'all') {
+                players = players.filter(p => p.id_categoria == catId);
+            }
+
+            // 2. Filtrar asistencias de esta fecha (de la caché global)
+            const todayAttendance = allAttendanceCache.filter(a => a.fecha === date);
+
+            // 3. Construir HTML
+            const listHtml = players.map(p => {
+                // Buscar si ya existe registro
+                const record = todayAttendance.find(a => a.id_jugador == p.id);
+                const savedStatus = record ? record.estado : 'P'; // Por defecto Presente
+
+                return `
+                <div class="attendance-row">
+                    <div>
+                        <div class="player-info">${p.nombres} ${p.apellidos}</div>
+                        <div class="player-sub">ID: ${p.id}</div>
+                    </div>
+                    <div class="radio-group">
+                        <label class="radio-label">
+                            <input type="radio" name="att_${p.id}" value="P" ${savedStatus === 'P' ? 'checked' : ''}>
+                            <span class="badge-p">Presente</span>
+                        </label>
+                        <label class="radio-label">
+                            <input type="radio" name="att_${p.id}" value="A" ${savedStatus === 'A' ? 'checked' : ''}>
+                            <span class="badge-a">Ausente</span>
+                        </label>
+                        <label class="radio-label">
+                            <input type="radio" name="att_${p.id}" value="E" ${savedStatus === 'E' ? 'checked' : ''}>
+                            <span class="badge-e">Excusa</span>
+                        </label>
+                    </div>
+                </div>`;
+            }).join('');
+
+            const container = document.getElementById('player-list');
+            container.innerHTML = listHtml || '<p style="padding:20px; text-align:center">No hay jugadores en esta categoría.</p>';
+            
+            updateSummary(players);
+        };
+
+        const updateSummary = (players) => {
+            let present = 0, absent = 0, excuse = 0, total = players.length;
+
+            players.forEach(p => {
+                const radios = document.getElementsByName(`att_${p.id}`);
+                if(radios.length > 0) {
+                    for(let r of radios) {
+                        if(r.checked) {
+                            if(r.value === 'P') present++;
+                            if(r.value === 'A') absent++;
+                            if(r.value === 'E') excuse++;
+                        }
+                    }
+                }
+            });
+
+            const percentage = total > 0 ? Math.round((present / total) * 100) : 0;
+
+            document.getElementById('summary-stats').innerHTML = `
+                <div style="display:grid; grid-template-columns: 1fr 1fr 1fr; gap:10px; margin-bottom:15px;">
+                    <div style="background:#ecfdf5; padding:10px; border-radius:8px;">
+                        <div style="font-size:1.5rem; font-weight:bold; color:#059669">${present}</div>
+                        <small>Presentes</small>
+                    </div>
+                    <div style="background:#fef2f2; padding:10px; border-radius:8px;">
+                        <div style="font-size:1.5rem; font-weight:bold; color:#dc2626">${absent}</div>
+                        <small>Ausentes</small>
+                    </div>
+                    <div style="background:#fffbeb; padding:10px; border-radius:8px;">
+                        <div style="font-size:1.5rem; font-weight:bold; color:#d97706">${excuse}</div>
+                        <small>Excusas</small>
+                    </div>
+                </div>
+                <div style="background:var(--bg-sidebar); color:white; padding:15px; border-radius:8px;">
+                    Asistencia Total: <strong style="font-size:1.2rem; margin-left:10px;">${percentage}%</strong>
+                    <div style="width:100%; height:6px; background:rgba(255,255,255,0.2); border-radius:3px; margin-top:5px;">
+                        <div style="width:${percentage}%; height:100%; background:var(--primary); border-radius:3px;"></div>
+                    </div>
+                </div>
+            `;
+        };
+
+        // Escuchar cambios en tiempo real para actualizar el resumen
+        document.addEventListener('change', (e) => {
+            if(e.target.name && e.target.name.startsWith('att_')) {
+                // Re-obtenemos la lista de jugadores actual del contexto
+                // Para simplificar, volvemos a llamar a loadList (rápido porque es cliente)
+                // o mejor, extraemos lógica. Aquí llamamos updateSummary si tuvieramos la lista.
+                // Lo más fácil: recalcular basado en el DOM actual.
+                const players = Array.from(document.querySelectorAll('.attendance-row')).map(row => {
+                    const idDiv = row.querySelector('.player-sub');
+                    const id = idDiv ? parseInt(idDiv.innerText.replace('ID: ', '')) : null;
+                    return { id };
+                }).filter(p => p.id);
+                updateSummary(players);
+            }
+        });
+
+        const saveAttendance = async () => {
+            const date = document.getElementById('att-date').value;
+            const catId = document.getElementById('att-cat').value;
+            
+            // Re-obtener jugadores filtrados para asegurar consistencia
+            let players = await db.getAll('jugadores');
+            if (catId !== 'all') players = players.filter(p => p.id_categoria == catId);
+
+            const attendanceData = [];
+
+            players.forEach(p => {
+                const radios = document.getElementsByName(`att_${p.id}`);
+                let status = 'P'; // Default
+                if(radios.length > 0) {
+                    for(let r of radios) if(r.checked) status = r.value;
+                }
+                attendanceData.push({
+                    id_jugador: p.id,
+                    fecha: date,
+                    estado: status
+                });
+            });
+
+            if (attendanceData.length === 0) {
+                return showToast('No hay jugadores para guardar', 'warning');
+            }
+
+            try {
+                showToast('Guardando...', 'success');
+                const res = await fetch('/api/asistencias', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(attendanceData)
+                });
+                
+                const result = await res.json();
+                
+                if(res.ok) {
+                    showToast('Asistencia guardada correctamente', 'success');
+                    // Actualizar caché local
+                    // Primero quitamos los viejos de esta fecha
+                    allAttendanceCache = allAttendanceCache.filter(a => a.fecha !== date);
+                    // Agregamos los nuevos
+                    allAttendanceCache = [...allAttendanceCache, ...attendanceData];
+                } else {
+                    throw new Error(result.error || 'Error desconocido');
+                }
+            } catch (error) {
+                console.error(error);
+                showToast('Error al guardar: ' + error.message, 'error');
+            }
+        };
+    </script>
+</body>
+</html>

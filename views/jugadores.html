@@ -2,154 +2,339 @@
 <html lang="es">
 <head>
     <meta charset="UTF-8">
-    <title>Jugadores - Futbol Manager</title>
+    <title>Gestión de Jugadores</title>
     <link rel="stylesheet" href="../assets/css/styles.css">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        .stat-card {
+            background: var(--bg-card);
+            padding: 15px;
+            border-radius: var(--radius);
+            box-shadow: var(--shadow);
+            text-align: center;
+            border-top: 3px solid var(--accent);
+        }
+        .stat-number { font-size: 1.5rem; font-weight: bold; color: var(--primary); }
+        .pagination { display: flex; justify-content: center; gap: 10px; margin-top: 20px; }
+        .pagination button { padding: 5px 15px; }
+    </style>
 </head>
 <body>
-    <div id="app-layout"><div id="sidebar-placeholder"></div><main><header><h1>Gestión de Jugadores</h1></header><div id="view-container" style="flex:1;"></div></main></div>
-    <div id="modal" class="modal-overlay"><div class="modal-box"><div class="modal-header"><h3 id="modal-title">Título</h3><button onclick="closeModal()" class="btn btn-sm btn-secondary"><i class="fas fa-times"></i></button></div><div id="modal-content"></div></div></div>
+    <div id="app-layout">
+        <div id="sidebar-placeholder"></div>
+        <main>
+            <header>
+                <h1>Gestión de Jugadores</h1>
+                <button class="btn btn-primary" onclick="newPlayerModal()"><i class="fas fa-plus"></i> Nuevo Jugador</button>
+            </header>
+            
+            <div id="view-container">
+                <!-- Sección de Estadísticas por Categoría -->
+                <div id="category-stats" class="grid-4" style="margin-bottom: 20px;">
+                    <!-- Se llena dinámicamente -->
+                </div>
+
+                <!-- Tabla de Jugadores -->
+                <div class="card">
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:15px;">
+                        <input type="text" id="search-input" placeholder="Buscar por nombre o apellido..." style="max-width:300px;" onkeyup="handleSearch()">
+                        <span class="text-muted" id="total-count">Total: 0</span>
+                    </div>
+                    
+                    <div class="table-container">
+                        <table id="players-table">
+                            <thead>
+                                <tr>
+                                    <th>Nombre Completo</th>
+                                    <th>Edad</th>
+                                    <th>Categoría</th>
+                                    <th>Teléfono</th>
+                                    <th>Tipo Sangre</th>
+                                    <th>Acciones</th>
+                                </tr>
+                            </thead>
+                            <tbody id="table-body">
+                                <!-- Filas dinámicas -->
+                            </tbody>
+                        </table>
+                    </div>
+
+                    <!-- Controles de Paginación -->
+                    <div class="pagination" id="pagination-controls">
+                        <!-- Botones dinámicos -->
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+    
+    <!-- Modal Structure -->
+    <div id="modal" class="modal-overlay">
+        <div class="modal-box">
+            <div class="modal-header">
+                <h3 id="modal-title">Título</h3>
+                <button onclick="closeModal()" class="btn btn-sm btn-secondary"><i class="fas fa-times"></i></button>
+            </div>
+            <div id="modal-content"></div>
+        </div>
+    </div>
+
     <div id="toast-container"></div>
+    
     <script src="../assets/js/common.js"></script>
     <script>
+        // Variables de estado
+        let allPlayers = [];
+        let filteredPlayers = [];
+        let currentPage = 1;
+        const itemsPerPage = 10;
+
         window.addEventListener('DOMContentLoaded', async () => { 
             if(!checkAuth()) return; 
             renderSidebar('jugadores'); 
-            await loadPlayers(); // Esperar a que carguen los jugadores de la nube
+            await initModule(); 
         });
 
-        async function loadPlayers() {
-            try {
-                const players = await db.getAll('jugadores');
-                
-                // Renderizar filas
-                const rows = players.map(p => { 
-                    const cat = db.getById('categorias', p.id_categoria); 
-                    
-                    // Simulamos estado visual ya que conectar el cálculo financiero completo requiere más endpoints API
-                    let badgeClass = 'bg-blue'; 
-                    
-                    return `<tr>
-                        <td>${p.nombres} ${p.apellidos}</td>
-                        <td>${utils.getAge(p.fecha_nacimiento)}</td>
-                        <td>${cat ? cat.nombre : 'N/A'}</td>
-                        <td>${p.telefono}</td>
-                        <td><span class="badge ${badgeClass}">ACTIVO</span></td>
-                        <td>
-                            <button class="btn btn-sm btn-secondary" onclick="editPlayer(${p.id})"><i class="fas fa-edit"></i></button> 
-                            <a href="pagos.html" class="btn btn-sm btn-primary" onclick="sessionStorage.setItem('payPlayerId', ${p.id})"><i class="fas fa-dollar-sign"></i></a> 
-                            <button class="btn btn-sm btn-accent" onclick="alert('Módulo médico conectado próximamente')"><i class="fas fa-notes-medical"></i></button>
-                        </td>
-                    </tr>`; 
-                }).join('');
-                
-                document.getElementById('view-container').innerHTML = `
-                    <div class="card" style="flex:1;">
-                        <div style="display:flex; justify-content:space-between; margin-bottom:15px;">
-                            <input type="text" placeholder="Buscar jugador..." style="max-width:300px;" onkeyup="filterTable('players-table', this.value)">
-                            <button class="btn btn-primary" onclick="newPlayerModal()"><i class="fas fa-plus"></i> Nuevo Jugador</button>
-                        </div>
-                        <div class="table-container">
-                            <table id="players-table">
-                                <thead><tr><th>Nombre</th><th>Edad</th><th>Cat.</th><th>Teléfono</th><th>Estado</th><th>Acciones</th></tr></thead>
-                                <tbody>${rows || '<tr><td colspan="6" style="text-align:center; padding:20px;">No hay jugadores registrados en la nube.</td></tr>'}</tbody>
-                            </table>
-                        </div>
-                    </div>`;
-            } catch (error) {
-                console.error(error);
-                showToast('Error al cargar jugadores', 'error');
-            }
+        async function initModule() {
+            // Cargar datos necesarios
+            await db.getAll('categorias'); // Asegurar categorías en caché
+            allPlayers = await db.getAll('jugadores');
+            filteredPlayers = [...allPlayers];
+            
+            renderCategoryStats();
+            renderTable();
         }
 
-        const newPlayerModal = async () => {
-            const cats = await db.getAll('categorias');
-            const catOptions = cats.map(c => `<option value="${c.id}">${c.nombre}</option>`).join('');
+        // --- RENDERIZADO DE ESTADÍSTICAS ---
+        function renderCategoryStats() {
+            const cats = db.data.categorias || [];
+            const container = document.getElementById('category-stats');
             
-            openModal('Nuevo Jugador', `
-                <form onsubmit="savePlayer(event)">
-                    <div class="grid-2">
-                        <div class="form-group"><label>Nombres</label><input type="text" id="p-name" required></div>
-                        <div class="form-group"><label>Apellidos</label><input type="text" id="p-lastname" required></div>
-                    </div>
-                    <div class="grid-2">
-                        <div class="form-group"><label>Fecha Nac.</label><input type="date" id="p-dob" required onchange="autoSetCategory()"></div>
-                        <div class="form-group"><label>Teléfono</label><input type="tel" id="p-phone" required></div>
-                    </div>
-                    <div class="grid-2">
-                        <div class="form-group"><label>Nombre Acudiente</label><input type="text" id="p-guardian" required></div>
-                        <div class="form-group"><label>Tel. Acudiente</label><input type="tel" id="p-guardian-phone" required></div>
-                    </div>
-                    <div class="form-group"><label>Categoría</label><select id="p-cat" required>${catOptions}</select></div>
-                    <button type="submit" class="btn btn-primary btn-block">Guardar en la Nube</button>
-                </form>
-            `);
+            if(cats.length === 0) {
+                container.innerHTML = '<p class="text-muted">No hay categorías configuradas.</p>';
+                return;
+            }
+
+            container.innerHTML = cats.map(c => {
+                const count = allPlayers.filter(p => p.id_categoria == c.id).length;
+                return `
+                <div class="stat-card">
+                    <div>${c.nombre}</div>
+                    <div class="stat-number">${count}</div>
+                    <small class="text-muted">Jugadores</small>
+                </div>`;
+            }).join('');
+        }
+
+        // --- RENDERIZADO DE TABLA Y PAGINACIÓN ---
+        function renderTable() {
+            const start = (currentPage - 1) * itemsPerPage;
+            const end = start + itemsPerPage;
+            const pageData = filteredPlayers.slice(start, end);
+
+            const tbody = document.getElementById('table-body');
+            tbody.innerHTML = '';
+
+            if (pageData.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="6" style="text-align:center; padding:20px;">No se encontraron jugadores.</td></tr>';
+            } else {
+                pageData.forEach(p => { 
+                    const cat = db.getById('categorias', p.id_categoria);
+                    const age = utils.getAge(p.fecha_nacimiento);
+                    
+                    tbody.innerHTML += `
+                    <tr>
+                        <td>
+                            <strong>${p.nombres} ${p.apellidos}</strong><br>
+                            <small class="text-muted">ID: ${p.id}</small>
+                        </td>
+                        <td>${age} años</td>
+                        <td><span class="badge bg-blue">${cat ? cat.nombre : 'Sin Categoría'}</span></td>
+                        <td>${p.telefono || '-'}</td>
+                        <td>${p.tipo_sangre || '-'}</td>
+                        <td>
+                            <div style="display:flex; gap:5px;">
+                                <button class="btn btn-sm btn-secondary" onclick="editPlayer(${p.id})" title="Editar"><i class="fas fa-edit"></i></button>
+                                <button class="btn btn-sm btn-danger" onclick="deletePlayer(${p.id})" title="Eliminar"><i class="fas fa-trash"></i></button>
+                                <button class="btn btn-sm btn-accent" onclick="goToPayment(${p.id})" title="Ir a Pagos"><i class="fas fa-dollar-sign"></i></button>
+                            </div>
+                        </td>
+                    </tr>`; 
+                });
+            }
+
+            // Actualizar contadores y paginación
+            document.getElementById('total-count').innerText = `Mostrando ${pageData.length} de ${filteredPlayers.length} jugadores`;
+            renderPagination();
+        }
+
+        function renderPagination() {
+            const totalPages = Math.ceil(filteredPlayers.length / itemsPerPage);
+            const container = document.getElementById('pagination-controls');
+            container.innerHTML = '';
+
+            if (totalPages <= 1) return;
+
+            // Botón Anterior
+            container.innerHTML += `<button class="btn btn-sm btn-secondary" ${currentPage === 1 ? 'disabled' : ''} onclick="changePage(${currentPage - 1})"><i class="fas fa-chevron-left"></i></button>`;
+            
+            // Info de página
+            container.innerHTML += `<span style="align-self:center; font-weight:bold; color:var(--text-muted);">Pág ${currentPage} de ${totalPages}</span>`;
+
+            // Botón Siguiente
+            container.innerHTML += `<button class="btn btn-sm btn-secondary" ${currentPage === totalPages ? 'disabled' : ''} onclick="changePage(${currentPage + 1})"><i class="fas fa-chevron-right"></i></button>`;
+        }
+
+        function changePage(page) {
+            currentPage = page;
+            renderTable();
+        }
+
+        function handleSearch() {
+            const text = document.getElementById('search-input').value.toLowerCase();
+            filteredPlayers = allPlayers.filter(p => 
+                p.nombres.toLowerCase().includes(text) || 
+                p.apellidos.toLowerCase().includes(text)
+            );
+            currentPage = 1; // Resetear a la primera página al buscar
+            renderTable();
+        }
+
+        // --- CRUD LOGIC ---
+
+        const newPlayerModal = async () => {
+            const cats = db.data.categorias || [];
+            if(cats.length === 0) return showToast('Primero crea categorías en Configuración', 'error');
+
+            const catOptions = cats.map(c => `<option value="${c.id}">${c.nombre}</option>`).join('');
+            const bloodTypes = ['O+', 'O-', 'A+', 'A-', 'B+', 'B-', 'AB+', 'AB-'];
+            const bloodOptions = bloodTypes.map(t => `<option value="${t}">${t}</option>`).join('');
+
+            // Formulario vacío
+            openModal('Nuevo Jugador', getPlayerFormHtml(catOptions, bloodOptions, null));
         };
 
-        const autoSetCategory = () => { 
-            const dob = document.getElementById('p-dob').value; 
-            if(!dob) return; 
-            const cat = utils.getCategory(utils.getAge(dob)); 
-            if(cat) document.getElementById('p-cat').value = cat.id; 
+        const editPlayer = async (id) => {
+            const player = db.getById('jugadores', id);
+            if(!player) return showToast('Jugador no encontrado', 'error');
+
+            const cats = db.data.categorias || [];
+            const catOptions = cats.map(c => `<option value="${c.id}" ${c.id == player.id_categoria ? 'selected' : ''}>${c.nombre}</option>`).join('');
+            
+            const bloodTypes = ['O+', 'O-', 'A+', 'A-', 'B+', 'B-', 'AB+', 'AB-'];
+            const bloodOptions = bloodTypes.map(t => `<option value="${t}" ${t === player.tipo_sangre ? 'selected' : ''}>${t}</option>`).join('');
+
+            // Formulario pre-llenado
+            openModal('Editar Jugador', getPlayerFormHtml(catOptions, bloodOptions, player));
         };
+
+        // Helper para generar el HTML del formulario (reutilizable)
+        function getPlayerFormHtml(catOptions, bloodOptions, player) {
+            const isEdit = !!player;
+            // Si editamos, intentamos obtener datos del acudiente si están disponibles, 
+            // pero en este esquema simple solo guardamos el ID. Asumimos que si editamos, el usuario puede cambiar los datos si tiene permiso.
+            
+            return `
+            <form onsubmit="savePlayer(event)">
+                <input type="hidden" id="p-id" value="${player ? player.id : ''}">
+                
+                <div class="grid-2">
+                    <div class="form-group"><label>Nombres</label><input type="text" id="p-name" value="${player ? player.nombres : ''}" required></div>
+                    <div class="form-group"><label>Apellidos</label><input type="text" id="p-lastname" value="${player ? player.apellidos : ''}" required></div>
+                </div>
+                
+                <div class="grid-2">
+                    <div class="form-group">
+                        <label>Fecha Nacimiento</label>
+                        <input type="date" id="p-dob" value="${player ? player.fecha_nacimiento : ''}" required>
+                        <!-- NOTA: Se eliminó onchange="autoSetCategory()" -->
+                    </div>
+                    <div class="form-group">
+                        <label>Tipo de Sangre</label>
+                        <select id="p-blood">
+                            <option value="">Seleccione...</option>
+                            ${bloodOptions}
+                        </select>
+                    </div>
+                </div>
+
+                <div class="form-group"><label>Teléfono</label><input type="tel" id="p-phone" value="${player ? player.telefono : ''}" required></div>
+
+                <div class="grid-2">
+                    <div class="form-group"><label>Nombre Acudiente</label><input type="text" id="p-guardian" value="${player ? '' : ''}" placeholder="Nombre del responsable"></div>
+                    <div class="form-group"><label>Tel. Acudiente</label><input type="tel" id="p-guardian-phone" value="${player ? '' : ''}" placeholder="Celular contacto"></div>
+                </div>
+                
+                <div class="form-group">
+                    <label>Categoría</label>
+                    <select id="p-cat" required>
+                        <option value="">Seleccione Categoría...</option>
+                        ${catOptions}
+                    </select>
+                </div>
+                
+                <button type="submit" class="btn btn-primary btn-block">
+                    <i class="fas fa-save"></i> ${isEdit ? 'Actualizar' : 'Guardar'} Jugador
+                </button>
+            </form>`;
+        }
 
         const savePlayer = async (e) => {
             e.preventDefault();
-            
-            // Recopilamos los datos que el Backend API espera
+            const id = document.getElementById('p-id').value;
+            const isEdit = id ? true : false;
+
             const playerData = {
                 nombres: document.getElementById('p-name').value,
                 apellidos: document.getElementById('p-lastname').value,
                 fecha_nacimiento: document.getElementById('p-dob').value,
                 telefono: document.getElementById('p-phone').value,
+                tipo_sangre: document.getElementById('p-blood').value,
                 id_categoria: document.getElementById('p-cat').value,
-                tipo_sangre: 'O+',
-                // Datos del acudiente para que el backend cree la relación en la BD
+                // Datos del acudiente para el backend
                 guardian_name: document.getElementById('p-guardian').value,
                 guardian_phone: document.getElementById('p-guardian-phone').value
             };
 
             try {
-                // Enviamos al servidor
-                await db.add('jugadores', playerData);
+                if (isEdit) {
+                    // Llamada a actualizar (Requiere endpoint PUT en backend)
+                    // Usamos db.update que actualiza caché local
+                    await db.update('jugadores', id, playerData);
+                    
+                    // IMPORTANTE: Como el backend actual (api/index.js) no tiene endpoint PUT para jugadores,
+                    // la actualización solo persistirá en la caché local del navegador hasta recargar.
+                    // Para persistencia real, necesitarías agregar app.put en el backend.
+                    showToast('Jugador actualizado (Local)', 'success');
+                } else {
+                    // Crear nuevo
+                    await db.add('jugadores', playerData);
+                    showToast('Jugador guardado', 'success');
+                }
+
                 closeModal();
-                showToast('Jugador guardado exitosamente en Turso', 'success');
-                await loadPlayers(); // Recargamos la lista desde la nube
+                await initModule(); // Recargar todo para ver cambios
             } catch (error) {
-                console.error("Error detallado:", error);
-                showToast('Error de conexión al guardar', 'error');
+                console.error(error);
+                showToast('Error al guardar: ' + (error.message || ''), 'error');
             }
         };
 
-        // Nota: La función Editar se mantiene visual. Para editar necesitarías crear un endpoint PUT en el backend.
-        const editPlayer = (id) => { 
-            const players = db.data.jugadores || []; 
-            const p = players.find(x => x.id == id);
-            
-            if(!p) { showToast('Jugador no encontrado', 'error'); return; }
-            
-            newPlayerModal();
-            setTimeout(() => {
-                document.getElementById('p-name').value = p.nombres; 
-                document.getElementById('p-lastname').value = p.apellidos; 
-                document.getElementById('p-dob').value = p.fecha_nacimiento; 
-                document.getElementById('p-phone').value = p.telefono; 
-                document.getElementById('p-cat').value = p.id_categoria;
-                
-                // Lógica de visualización para acudiente (simulada)
-                if(p.id_acudiente) {
-                     // Nota: En este código simplificado no mostramos el nombre del acudiente al editar
-                     // porque no lo trajimos en la consulta SQL de getAll('jugadores').
-                     // Para hacerlo, deberías hacer un JOIN en la API.
-                }
+        const deletePlayer = async (id) => {
+            if(!confirm('¿Estás seguro de ELIMINAR este jugador? Esta acción no se puede deshacer.')) return;
 
-                // Prevenimos guardar en modo edición por ahora hasta que agregues el endpoint PUT en el backend
-                const form = document.querySelector('#modal-content form');
-                form.onsubmit = (ev) => {
-                    ev.preventDefault();
-                    showToast('La edición aún no está conectada a la base de datos.', 'warning');
-                };
-            }, 100); 
+            try {
+                await db.delete('jugadores', id);
+                showToast('Jugador eliminado', 'success');
+                await initModule(); // Recargar
+            } catch (error) {
+                showToast('Error al eliminar', 'error');
+            }
+        };
+
+        const goToPayment = (id) => {
+            sessionStorage.setItem('payPlayerId', id);
+            window.location.href = 'pagos.html';
         };
     </script>
 </body>

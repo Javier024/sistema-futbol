@@ -1,13 +1,293 @@
 <!DOCTYPE html>
 <html lang="es">
-<head><meta charset="UTF-8"><title>Gastos</title><link rel="stylesheet" href="../assets/css/styles.css"><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css"></head>
-<body><div id="app-layout"><div id="sidebar-placeholder"></div><main><header><h1>Gastos</h1></header><div id="view-container" style="height:100%;"></div></main></div><div id="toast-container"></div>
-<script src="../assets/js/common.js"></script><script>
-window.addEventListener('DOMContentLoaded', () => { if(!checkAuth()) return; renderSidebar('gastos'); loadGastos(); });
-function loadGastos() {
-    const rows = db.getAll('gastos').sort((a,b)=>new Date(b.fecha_gasto)-new Date(a.fecha_gasto)).map(e => `<tr><td>${utils.formatDate(e.fecha_gasto)}</td><td>${e.concepto}</td><td style="color:var(--danger);font-weight:bold;">-${utils.formatMoney(e.monto)}</td><td><button class="btn btn-sm btn-danger" onclick="db.delete('gastos',${e.id});loadGastos();"><i class="fas fa-trash"></i></button></td></tr>`).join('');
-    document.getElementById('view-container').innerHTML = `<div class="grid-2"><div class="card"><h3>Registrar</h3><form onsubmit="saveExp(event)"><div class="form-group"><label>Concepto</label><input id="c" required></div><div class="form-group"><label>Monto</label><input type="number" id="m" required></div><div class="form-group"><label>Fecha</label><input type="date" id="f" required></div><button class="btn btn-danger btn-block">Guardar</button></form></div><div class="card"><h3>Historial</h3><table><thead><tr><th>Fecha</th><th>Concepto</th><th>Monto</th><th></th></tr></thead><tbody>${rows||'<tr><td colspan="4">Sin gastos</td></tr>'}</tbody></table></div></div>`;
-    document.getElementById('f').valueAsDate = new Date();
-}
-const saveExp = (e) => { e.preventDefault(); db.add('gastos', {concepto:document.getElementById('c').value, monto:document.getElementById('m').value, fecha_gasto:document.getElementById('f').value}); showToast('Guardado'); loadGastos(); };
-</script></body></html>
+<head>
+    <meta charset="UTF-8">
+    <title>Gastos</title>
+    <link rel="stylesheet" href="../assets/css/styles.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+</head>
+<body>
+    <div id="app-layout">
+        <div id="sidebar-placeholder"></div>
+        <main>
+            <header>
+                <div style="display:flex; justify-content:space-between; align-items:center;">
+                    <h1>Gestión de Gastos</h1>
+                    <div style="background:var(--bg-card); padding:10px 20px; border-radius:var(--radius); border:1px solid var(--border); box-shadow:var(--shadow);">
+                        <span style="color:var(--text-muted); font-size:0.9rem;">Total Gastos:</span>
+                        <strong id="total-expenses-display" style="font-size:1.2rem; color:var(--danger); margin-left:10px;">$0</strong>
+                    </div>
+                </div>
+            </header>
+            
+            <div id="view-container">
+                <div class="grid-2" style="height: calc(100vh - 140px);">
+                    
+                    <!-- PANEL IZQUIERDO: FORMULARIO -->
+                    <div class="card" style="display:flex; flex-direction:column; height:100%; overflow:hidden;">
+                        <h3 id="form-title"><i class="fas fa-plus-circle"></i> Registrar Gasto</h3>
+                        <form id="expense-form" style="flex:1; overflow-y:auto; padding-right:5px;" onsubmit="handleExpenseSubmit(event)">
+                            <input type="hidden" id="exp-id"> <!-- Para saber si es edición -->
+                            
+                            <div class="form-group">
+                                <label>Concepto</label>
+                                <input type="text" id="exp-concept" required placeholder="Ej: Arriendo Cancha">
+                            </div>
+                            
+                            <div class="form-group">
+                                <label>Categoría</label>
+                                <select id="exp-category">
+                                    <option value="Operativo">Operativo</option>
+                                    <option value="Nómina">Nómina</option>
+                                    <option value="Mantenimiento">Mantenimiento</option>
+                                    <option value="Eventos">Eventos</option>
+                                    <option value="Otros">Otros</option>
+                                </select>
+                            </div>
+
+                            <div class="grid-2">
+                                <div class="form-group">
+                                    <label>Monto</label>
+                                    <input type="number" id="exp-amount" required min="0" placeholder="0.00">
+                                </div>
+                                <div class="form-group">
+                                    <label>Fecha</label>
+                                    <input type="date" id="exp-date" required>
+                                </div>
+                            </div>
+
+                            <div class="form-group">
+                                <label>Notas (Opcional)</label>
+                                <textarea id="exp-notes" rows="3" placeholder="Detalles adicionales..."></textarea>
+                            </div>
+
+                            <div style="display:flex; gap:10px; margin-top:auto;">
+                                <button type="button" class="btn btn-secondary btn-block" onclick="resetForm()" id="btn-cancel" style="display:none;">Cancelar</button>
+                                <button type="submit" class="btn btn-danger btn-block" id="btn-submit">
+                                    <i class="fas fa-save"></i> Guardar Gasto
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+
+                    <!-- PANEL DERECHO: TABLA -->
+                    <div class="card" style="display:flex; flex-direction:column; height:100%; overflow:hidden;">
+                        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+                            <h3>Historial</h3>
+                            <input type="text" placeholder="Buscar concepto..." style="width:200px; padding:5px;" onkeyup="filterExpenses(this.value)">
+                        </div>
+                        
+                        <div class="table-container" style="flex:1; overflow-y:auto;">
+                            <table>
+                                <thead>
+                                    <tr>
+                                        <th>Fecha</th>
+                                        <th>Concepto</th>
+                                        <th>Cat.</th>
+                                        <th>Monto</th>
+                                        <th>Acciones</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="expenses-table-body">
+                                    <!-- Filas JS -->
+                                </tbody>
+                            </table>
+                        </div>
+
+                        <!-- Paginación -->
+                        <div class="pagination-controls" style="border-top:1px solid var(--border); margin-top:0; padding-top:10px;">
+                            <!-- JS -->
+                        </div>
+                    </div>
+
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <div id="toast-container"></div>
+    <script src="../assets/js/common.js"></script>
+    <script>
+        // Variables de estado
+        let allExpenses = [];
+        let filteredExpenses = [];
+        let currentPage = 1;
+        const itemsPerPage = 8;
+
+        window.addEventListener('DOMContentLoaded', async () => { 
+            if(!checkAuth()) return; 
+            renderSidebar('gastos'); 
+            
+            // Inicializar fecha por defecto
+            document.getElementById('exp-date').valueAsDate = new Date();
+            
+            await loadExpenses(); 
+        });
+
+        async function loadExpenses() {
+            // Esperar datos
+            const data = await db.getAll('gastos');
+            
+            // Ordenar por fecha descendente
+            allExpenses = data.sort((a, b) => new Date(b.fecha_gasto) - new Date(a.fecha_gasto));
+            filteredExpenses = [...allExpenses];
+            
+            calculateTotal();
+            renderTable();
+        }
+
+        function calculateTotal() {
+            const total = allExpenses.reduce((sum, item) => sum + parseFloat(item.monto || 0), 0);
+            document.getElementById('total-expenses-display').innerText = utils.formatMoney(total);
+        }
+
+        function filterExpenses(text) {
+            const term = text.toLowerCase();
+            filteredExpenses = allExpenses.filter(e => 
+                e.concepto.toLowerCase().includes(term) || 
+                (e.categoria && e.categoria.toLowerCase().includes(term))
+            );
+            currentPage = 1;
+            renderTable();
+        }
+
+        function renderTable() {
+            const tbody = document.getElementById('expenses-table-body');
+            tbody.innerHTML = '';
+
+            if (filteredExpenses.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; padding:20px;">No hay gastos registrados.</td></tr>';
+                document.querySelector('.pagination-controls').innerHTML = '';
+                return;
+            }
+
+            // Paginar
+            const totalPages = Math.ceil(filteredExpenses.length / itemsPerPage);
+            if(currentPage > totalPages) currentPage = 1;
+            const start = (currentPage - 1) * itemsPerPage;
+            const end = start + itemsPerPage;
+            const pageData = filteredExpenses.slice(start, end);
+
+            pageData.forEach(e => {
+                const row = `
+                    <tr>
+                        <td>${utils.formatDate(e.fecha_gasto)}</td>
+                        <td>
+                            <strong>${e.concepto}</strong>
+                            ${e.notas ? `<br><small style="color:var(--text-muted)">${e.notas}</small>` : ''}
+                        </td>
+                        <td><span class="badge bg-secondary" style="background:#64748b">${e.categoria || 'General'}</span></td>
+                        <td style="color:var(--danger); font-weight:bold;">-${utils.formatMoney(e.monto)}</td>
+                        <td>
+                            <button class="btn btn-sm btn-secondary" onclick="editExpense(${e.id})" title="Editar"><i class="fas fa-edit"></i></button>
+                            <button class="btn btn-sm btn-danger" onclick="deleteExpense(${e.id})" title="Eliminar"><i class="fas fa-trash"></i></button>
+                        </td>
+                    </tr>
+                `;
+                tbody.innerHTML += row;
+            });
+
+            renderPagination(totalPages);
+        }
+
+        function renderPagination(totalPages) {
+            const container = document.querySelector('.pagination-controls');
+            container.innerHTML = '';
+            if (totalPages <= 1) return;
+
+            container.innerHTML = `
+                <button class="btn btn-sm btn-secondary" ${currentPage === 1 ? 'disabled' : ''} onclick="changePage(${currentPage - 1})">Anterior</button>
+                <span class="pagination-info" style="margin:0 10px;">Pág ${currentPage} de ${totalPages}</span>
+                <button class="btn btn-sm btn-secondary" ${currentPage === totalPages ? 'disabled' : ''} onclick="changePage(${currentPage + 1})">Siguiente</button>
+            `;
+        }
+
+        function changePage(page) {
+            currentPage = page;
+            renderTable();
+        }
+
+        // --- CRUD LOGIC ---
+
+        async function handleExpenseSubmit(e) {
+            e.preventDefault();
+            
+            const id = document.getElementById('exp-id').value;
+            const expenseData = {
+                concepto: document.getElementById('exp-concept').value,
+                categoria: document.getElementById('exp-category').value,
+                monto: document.getElementById('exp-amount').value,
+                fecha_gasto: document.getElementById('exp-date').value,
+                notas: document.getElementById('exp-notes').value
+            };
+
+            try {
+                if (id) {
+                    // EDITAR
+                    // Nota: Asegúrate de tener app.put('/api/gastos/:id') en tu backend
+                    await db.update('gastos', id, expenseData);
+                    showToast('Gasto actualizado', 'success');
+                } else {
+                    // CREAR
+                    await db.add('gastos', expenseData);
+                    showToast('Gasto registrado', 'success');
+                }
+
+                resetForm();
+                await loadExpenses(); // Recargar datos
+            } catch (error) {
+                console.error(error);
+                showToast('Error al guardar gasto', 'error');
+            }
+        }
+
+        function editExpense(id) {
+            const expense = db.getById('gastos', id);
+            if (!expense) return;
+
+            // Llenar formulario
+            document.getElementById('exp-id').value = expense.id;
+            document.getElementById('exp-concept').value = expense.concepto;
+            document.getElementById('exp-category').value = expense.categoria || 'Operativo';
+            document.getElementById('exp-amount').value = expense.monto;
+            document.getElementById('exp-date').value = expense.fecha_gasto;
+            document.getElementById('exp-notes').value = expense.notas || '';
+
+            // Cambiar estado visual del formulario
+            document.getElementById('form-title').innerHTML = '<i class="fas fa-edit"></i> Editar Gasto';
+            document.getElementById('btn-submit').innerHTML = '<i class="fas fa-sync"></i> Actualizar Gasto';
+            document.getElementById('btn-submit').className = 'btn btn-primary btn-block';
+            document.getElementById('btn-cancel').style.display = 'block';
+
+            // Scroll al formulario en móvil
+            if(window.innerWidth < 768) {
+                document.querySelector('.grid-2').firstElementChild.scrollIntoView({behavior:'smooth'});
+            }
+        }
+
+        function resetForm() {
+            document.getElementById('expense-form').reset();
+            document.getElementById('exp-id').value = '';
+            document.getElementById('exp-date').valueAsDate = new Date();
+            
+            // Restaurar estado visual
+            document.getElementById('form-title').innerHTML = '<i class="fas fa-plus-circle"></i> Registrar Gasto';
+            document.getElementById('btn-submit').innerHTML = '<i class="fas fa-save"></i> Guardar Gasto';
+            document.getElementById('btn-submit').className = 'btn btn-danger btn-block';
+            document.getElementById('btn-cancel').style.display = 'none';
+        }
+
+        async function deleteExpense(id) {
+            if(!confirm('¿Estás seguro de eliminar este gasto?')) return;
+            
+            try {
+                await db.delete('gastos', id);
+                showToast('Gasto eliminado', 'success');
+                await loadExpenses();
+            } catch (error) {
+                showToast('Error al eliminar', 'error');
+            }
+        }
+    </script>
+</body>
+</html>

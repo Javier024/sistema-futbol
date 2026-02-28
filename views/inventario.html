@@ -1,9 +1,126 @@
 <!DOCTYPE html>
 <html lang="es">
-<head><meta charset="UTF-8"><title>Inventario</title><link rel="stylesheet" href="../assets/css/styles.css"><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css"></head>
-<body><div id="app-layout"><div id="sidebar-placeholder"></div><main><header><h1>Inventario</h1></header><div id="view-container"></div></main></div><div id="toast-container"></div>
-<script src="../assets/js/common.js"></script><script>
-window.addEventListener('DOMContentLoaded', () => { if(!checkAuth()) return; renderSidebar('inventario'); loadInv(); });
-function loadInv() { const rows = db.getAll('inventario_items').map(i => `<tr><td>${i.nombre}</td><td style="font-weight:bold;">${i.stock}</td><td>${i.stock<=i.stock_minimo?'<span class="badge bg-red">Bajo</span>':'<span class="badge bg-green">OK</span>'}</td><td><button class="btn btn-sm btn-secondary" onclick="mv(${i.id},1)">+</button> <button class="btn btn-sm btn-secondary" onclick="mv(${i.id},-1)">-</button></td></tr>`).join(''); document.getElementById('view-container').innerHTML = `<div class="card"><table><thead><tr><th>Item</th><th>Stock</th><th>Estado</th><th>Ajuste</th></tr></thead><tbody>${rows}</tbody></table></div>`; }
-const mv = (id,q) => { const i = db.getById('inventario_items', id); if(i&&(i.stock+q)>=0){ db.update('inventario_items',id,{stock:i.stock+q}); loadInv(); } };
-</script></body></html>
+<head>
+    <meta charset="UTF-8">
+    <title>Inventario</title>
+    <link rel="stylesheet" href="../assets/css/styles.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+</head>
+<body>
+    <div id="app-layout">
+        <div id="sidebar-placeholder"></div>
+        <main>
+            <header>
+                <h1>Inventario de Implementos</h1>
+                <button class="btn btn-primary" onclick="openItemModal()"><i class="fas fa-plus"></i> Nuevo Item</button>
+            </header>
+            <div id="view-container"></div>
+        </main>
+    </div>
+    
+    <!-- Modal para crear/editar items -->
+    <div id="modal" class="modal-overlay">
+        <div class="modal-box">
+            <div class="modal-header">
+                <h3 id="modal-title">Item</h3>
+                <button onclick="closeModal()" class="btn btn-sm btn-secondary"><i class="fas fa-times"></i></button>
+            </div>
+            <div id="modal-content"></div>
+        </div>
+    </div>
+    <div id="toast-container"></div>
+
+    <script src="../assets/js/common.js"></script>
+    <script>
+        window.addEventListener('DOMContentLoaded', async () => {
+            if(!checkAuth()) return; 
+            renderSidebar('inventario'); 
+            await loadInventory();
+        });
+
+        async function loadInventory() {
+            const items = await db.getAll('inventario_items');
+            
+            const rows = items.map(i => {
+                const isLow = parseInt(i.stock) <= parseInt(i.stock_minimo);
+                const statusBadge = isLow 
+                    ? `<span class="badge bg-red">Bajo Stock</span>` 
+                    : `<span class="badge bg-green">OK</span>`;
+                
+                return `<tr>
+                    <td><strong>${i.nombre}</strong><br><small class="text-muted">${i.categoria || 'General'}</small></td>
+                    <td style="font-size:1.1rem; font-weight:bold;">${i.stock}</td>
+                    <td>${statusBadge}</td>
+                    <td>
+                        <div style="display:flex; gap:5px;">
+                            <button class="btn btn-sm btn-secondary" onclick="updateStock(${i.id}, 1)" title="Agregar"><i class="fas fa-plus"></i></button> 
+                            <button class="btn btn-sm btn-secondary" onclick="updateStock(${i.id}, -1)" title="Quitar"><i class="fas fa-minus"></i></button>
+                        </div>
+                    </td>
+                </tr>`;
+            }).join('');
+
+            document.getElementById('view-container').innerHTML = `
+                <div class="card">
+                    <div class="table-container">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>Item / Categoría</th>
+                                    <th>Stock Actual</th>
+                                    <th>Estado</th>
+                                    <th>Ajuste Rápido</th>
+                                </tr>
+                            </thead>
+                            <tbody>${rows || '<tr><td colspan="4" style="text-align:center; padding:20px;">Inventario vacío.</td></tr>'}</tbody>
+                        </table>
+                    </div>
+                </div>
+            `;
+        }
+
+        const openItemModal = () => {
+            openModal('Nuevo Item', `
+                <form onsubmit="saveItem(event)">
+                    <div class="form-group"><label>Nombre del Item</label><input type="text" id="inv-name" required placeholder="Ej: Balón Nº5"></div>
+                    <div class="form-group"><label>Categoría</label><input type="text" id="inv-cat" placeholder="Ej: Equipamiento"></div>
+                    <div class="grid-2">
+                        <div class="form-group"><label>Stock Inicial</label><input type="number" id="inv-stock" value="0" required></div>
+                        <div class="form-group"><label>Stock Mínimo</label><input type="number" id="inv-min" value="5" required></div>
+                    </div>
+                    <button class="btn btn-primary btn-block">Guardar Item</button>
+                </form>
+            `);
+        };
+
+        const saveItem = async (e) => {
+            e.preventDefault();
+            const item = {
+                nombre: document.getElementById('inv-name').value,
+                categoria: document.getElementById('inv-cat').value,
+                stock: document.getElementById('inv-stock').value,
+                stock_minimo: document.getElementById('inv-min').value
+            };
+            await db.add('inventario_items', item);
+            closeModal();
+            showToast('Item creado', 'success');
+            loadInventory();
+        };
+
+        const updateStock = async (id, change) => {
+            const item = db.getById('inventario_items', id);
+            if (!item) return;
+
+            const newStock = parseInt(item.stock) + change;
+            if (newStock < 0) {
+                showToast('El stock no puede ser negativo', 'error');
+                return;
+            }
+
+            // Llamar al endpoint PUT de inventario
+            await db.update('inventario_items', id, { stock: newStock });
+            loadInventory();
+        };
+    </script>
+</body>
+</html>
